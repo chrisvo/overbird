@@ -1,0 +1,190 @@
+esphome:
+  name: overhead
+  friendly_name: Overhead
+  min_version: 2026.11.0
+  on_boot:
+    priority: -100
+    then:
+      - component.update: board_display
+
+esp32:
+  board: seeed_xiao_esp32s3
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+
+logger:
+  hardware_uart: UART0
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  on_connect:
+    - if:
+        condition:
+          lambda: return !id(has_requested);
+        then:
+          - script.execute: fetch_aircraft
+
+http_request:
+  timeout: 8s
+
+json:
+
+substitutions:
+  radius_nm: "10"
+  home_latitude: !secret home_latitude
+  home_longitude: !secret home_longitude
+
+globals:
+  - id: has_requested
+    type: bool
+    initial_value: 'false'
+  - id: aircraft_rows
+    type: 'std::vector<std::pair<double, std::string>>'
+  - id: board_status
+    type: std::string
+    initial_value: '"Waiting for Wi-Fi"'
+
+interval:
+  - interval: 3min
+    then:
+      - script.execute: fetch_aircraft
+
+script:
+  - id: fetch_aircraft
+    then:
+      - wait_until:
+          condition:
+            lambda: return !id(board_display).is_updating();
+      - if:
+          condition: wifi.connected
+          then:
+            - lambda: id(has_requested) = true;
+            - http_request.get:
+                url: !lambda |-
+                  return "https://api.adsb.lol/v2/point/" +
+                         std::to_string(double(${home_latitude})) + "/" +
+                         std::to_string(double(${home_longitude})) + "/${radius_nm}";
+                capture_response: true
+                max_response_buffer_size: 65536
+                on_response:
+                  - lambda: |-
+                      auto &rows = id(aircraft_rows);
+                      auto &status = id(board_status);
+                      rows.clear();
+                      if (response->status_code != 200) {
+                        status = response->status_code == 429 ? "Feed quota reached" : "Flight feed unavailable";
+                        return;
+                      }
+
+                      const bool valid = json::parse_json(body, [&](JsonObject root) {
+                        const auto aircraft = root["ac"].as<JsonArrayConst>();
+                        if (aircraft.isNull()) {
+                          return root["total"].is<int>() && root["total"].as<int>() == 0;
+                        }
+
+                        constexpr double radians = 0.017453292519943295;
+                        constexpr double home_lat = ${home_latitude} * radians;
+                        constexpr double home_lon = ${home_longitude} * radians;
+                        for (JsonObjectConst plane : aircraft) {
+                          if (!plane["lat"].is<double>() || !plane["lon"].is<double>() ||
+                              !plane["seen_pos"].is<double>() || plane["seen_pos"].as<double>() > 30 ||
+                              std::string(plane["alt_baro"] | "") == "ground") {
+                            continue;
+                          }
+
+                          const double lat = plane["lat"].as<double>() * radians;
+                          const double lon = plane["lon"].as<double>() * radians;
+                          const double dlat = std::sin((lat - home_lat) / 2);
+                          const double dlon = std::sin((lon - home_lon) / 2);
+                          const double a = dlat * dlat + std::cos(home_lat) * std::cos(lat) * dlon * dlon;
+                          const double distance = 6880.13 * std::asin(std::sqrt(std::clamp(a, 0.0, 1.0)));
+                          if (distance > ${radius_nm}) {
+                            continue;
+                          }
+
+                          std::string label = plane["flight"] | "";
+                          const auto end = label.find_last_not_of(' ');
+                          label = end == std::string::npos ? "" : label.substr(0, end + 1);
+                          if (label.empty()) label = plane["r"] | "";
+                          if (label.empty()) label = plane["hex"] | "-";
+
+                          const auto altitude = plane["alt_baro"].is<int>()
+                              ? std::to_string(plane["alt_baro"].as<int>()) : "-";
+                          const auto speed = plane["gs"].is<double>()
+                              ? std::to_string(std::lround(plane["gs"].as<double>())) : "-";
+
+                          char row[64];
+                          snprintf(row, sizeof(row), "%-10.10s %-6.6s %8s %7s %7.1f",
+                                   label.c_str(), plane["t"] | "-", altitude.c_str(), speed.c_str(), distance);
+                          rows.emplace_back(distance, row);
+                        }
+                        std::sort(rows.begin(), rows.end());
+                        return true;
+                      });
+                      status = valid ? "" : "Invalid flight data";
+                      if (valid) {
+                        ESP_LOGI("overhead", "Flight board received %u nearby aircraft",
+                                 static_cast<unsigned>(rows.size()));
+                      }
+                  - component.update: board_display
+                on_error:
+                  - lambda: |-
+                      id(aircraft_rows).clear();
+                      id(board_status) = "Flight feed unavailable";
+                  - component.update: board_display
+          else:
+            - lambda: |-
+                id(aircraft_rows).clear();
+                id(board_status) = "Waiting for Wi-Fi";
+            - component.update: board_display
+
+font:
+  - file: "gfonts://IBM Plex Mono"
+    id: board_font
+    size: 27
+  - file: "gfonts://Inter@700"
+    id: title_font
+    size: 60
+  - file: "gfonts://Inter"
+    id: detail_font
+    size: 20
+
+spi:
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+
+display:
+  - platform: epaper_spi
+    model: Seeed-reTerminal-E1001
+    id: board_display
+    update_interval: never
+    full_update_every: 12
+    lambda: |-
+      const auto ink = Color::BLACK;
+      it.print(32, 17, id(title_font), ink, "Overhead");
+      it.printf(768, 50, id(detail_font), ink, TextAlign::TOP_RIGHT, "Within %s NM", "${radius_nm}");
+      it.horizontal_line(32, 108, 736, ink);
+
+      const auto &rows = id(aircraft_rows);
+      const auto &status = id(board_status);
+      if (!status.empty()) {
+        it.print(32, 150, id(board_font), ink, status.c_str());
+      } else if (rows.empty()) {
+        it.print(32, 150, id(board_font), ink, "No aircraft in range");
+      } else {
+        it.printf(36, 123, id(board_font), ink, "%-10s %-6s %8s %7s %7s",
+                  "FLIGHT", "TYPE", "ALT FT", "SPD KT", "DIST NM");
+        for (size_t i = 0; i < std::min<size_t>(rows.size(), 6); ++i) {
+          it.print(36, 169 + 43 * i, id(board_font), ink, rows[i].second.c_str());
+        }
+        if (rows.size() > 6) {
+          it.printf(768, 442, id(detail_font), ink, TextAlign::TOP_RIGHT, "+%u more",
+                    static_cast<unsigned>(rows.size() - 6));
+        }
+      }
+      it.horizontal_line(32, 430, 736, ink);
+      it.print(32, 442, id(detail_font), ink, "adsb.lol  /  3 min updates");
