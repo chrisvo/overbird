@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Overhead virtual display</title>
+  <style>
+    :root { color-scheme: light dark; font-family: var(--font-sans, system-ui, sans-serif); color: var(--foreground, light-dark(#242424, #eee)); }
+    body { margin: 0; }
+    * { box-sizing: border-box; }
+    .toolbar, .footnote { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+    .toolbar { margin-bottom: 18px; }
+    label { font-size: 13px; display: flex; align-items: center; gap: 8px; }
+    select, button, .download { font: inherit; font-size: 13px; color: inherit; background: var(--secondary, light-dark(#eee, #282828)); border: 1px solid var(--border, #7777); border-radius: 6px; padding: 8px 10px; }
+    select:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--ring, #3987e8); outline-offset: 3px; }
+    button, .download { cursor: pointer; }
+    .download { margin-left: auto; text-decoration: none; }
+    .viewport { overflow: auto; padding: 4px; }
+    .device { max-width: 860px; margin: 0 auto; padding: 24px 28px 28px; border-radius: 18px; background: #e1e3e1; box-shadow: 0 2px 3px #0003, inset 0 0 0 1px #fff8; }
+    .screen { background: white; border: 2px solid #333; line-height: 0; }
+    img { display: block; width: 100%; height: auto; aspect-ratio: 5 / 3; }
+    .device.actual { width: 860px; max-width: none; }
+    .device.actual img { width: 800px; image-rendering: pixelated; }
+    .device.bare { padding: 0; border-radius: 0; background: transparent; box-shadow: none; max-width: 800px; }
+    .device.bare .screen { border: none; }
+    .device.bare.actual { width: 800px; }
+    .footnote { margin-top: 14px; font-size: 12px; color: var(--muted-foreground, light-dark(#666, #aaa)); }
+    .footnote span:last-child { margin-left: auto; }
+    #description { margin: 9px 0 0; font-size: 13px; color: var(--muted-foreground, light-dark(#666, #aaa)); }
+    #warnings { color: var(--warning, #d99a34); font-size: 13px; }
+    @media (max-width: 480px) { .toolbar { gap: 8px; } .download { margin-left: 0; } .device:not(.actual) { padding: 14px; border-radius: 12px; } .device.bare { padding: 0; } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="toolbar" aria-label="Preview controls">
+      <label>Scene <select id="scene"></select></label>
+      <button id="zoom" type="button" aria-pressed="false">View at 1:1</button>
+      <button id="frame" type="button" aria-pressed="true">Device frame</button>
+      <a id="download" class="download" download="overhead.png">Save PNG</a>
+    </div>
+    <div class="viewport">
+      <div class="device" id="device"><div class="screen"><img id="display" width="800" height="480" alt="Overhead flight board"></div></div>
+    </div>
+    <div class="footnote"><span>Seeed reTerminal E1001 · 800 × 480 · 1-bit</span><span>Sample data</span></div>
+    <p id="description" aria-live="polite"></p>
+    <p id="warnings" role="status" hidden></p>
+  </main>
+  <script>
+    const preview = __PREVIEW_DATA__;
+    const scene = document.querySelector('#scene');
+    const display = document.querySelector('#display');
+    const device = document.querySelector('#device');
+    for (const state of preview.states) scene.add(new Option(state.label, state.id));
+    function renderScene() {
+      const state = preview.states.find(state => state.id === scene.value);
+      display.src = state.image;
+      display.alt = `Overhead flight board: ${state.label}`;
+      document.querySelector('#description').textContent = state.description;
+      const warnings = document.querySelector('#warnings');
+      warnings.textContent = state.warnings.join(' · ');
+      warnings.hidden = !state.warnings.length;
+      const download = document.querySelector('#download');
+      download.href = state.image;
+      download.download = `overhead-${state.id}.png`;
+    }
+    scene.addEventListener('change', renderScene);
+    document.querySelector('#zoom').addEventListener('click', event => {
+      const actual = device.classList.toggle('actual');
+      event.currentTarget.setAttribute('aria-pressed', String(actual));
+      event.currentTarget.textContent = actual ? 'Fit to view' : 'View at 1:1';
+    });
+    document.querySelector('#frame').addEventListener('click', event => {
+      event.currentTarget.setAttribute('aria-pressed', String(!device.classList.toggle('bare')));
+    });
+    renderScene();
+  </script>
+</body>
+</html>
