@@ -6,7 +6,6 @@
 
 import argparse
 import base64
-import hashlib
 import io
 import json
 import os
@@ -202,8 +201,9 @@ def build(config_path=ROOT / "overhead.yaml", output=HERE / "output", fixtures_p
             "image": "data:image/png;base64," + base64.b64encode(png).decode(),
             "warnings": warnings, "commands": operations,
         })
-    (output / "commands.json").write_text(json.dumps(states, indent=2) + '\n')
-    payload = json.dumps({"states": states, "sourceHash": hashlib.sha256(config_path.read_bytes()).hexdigest()[:12]})
+    records = [{key: value for key, value in state.items() if key != "image"} for state in states]
+    (output / "commands.json").write_text(json.dumps(records, indent=2) + '\n')
+    payload = json.dumps({"states": [{key: value for key, value in state.items() if key != "commands"} for state in states]})
     html = (HERE / "template.html").read_text().replace("__PREVIEW_DATA__", payload.replace("<", "\\u003c"))
     (output / "index.html").write_text(html)
     print(f"Built {len(states)} states: {output / 'index.html'}", flush=True)

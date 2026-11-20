@@ -3,6 +3,7 @@ import tempfile
 import unittest
 
 from PIL import Image
+import yaml
 
 from build import ROOT, build, read_config, record_commands
 
@@ -51,16 +52,31 @@ class PreviewTests(unittest.TestCase):
                     self.assertEqual({value for _, value in image.getcolors()}, {0, 255})
                 self.assertEqual(state["warnings"], [])
 
-    def test_firmware_edits_change_preview_without_editing_renderer(self):
-        source = (ROOT / "overhead.yaml").read_text()
-        source = source.replace('ink, "Overhead"', 'ink, "Flight test"').replace('radius_nm: "10"', 'radius_nm: "25"').replace('size: 60', 'size: 42')
-        config_path = self.output / "edited.yaml"
-        config_path.write_text(source)
-        states = build(config_path=config_path, output=self.output / "edited")
-        text = [command["text"] for command in states[0]["commands"] if command["kind"] == "text"]
-        self.assertIn("Flight test", text)
-        self.assertIn("Within 25 NM", text)
-        self.assertNotEqual(states[0]["image"], self.states["busy"]["image"])
+    def build_controlled_layout(self, name, title="Preview title", size=40, radius="10"):
+        config, _ = read_config(ROOT / "overhead.yaml")
+        display = next(item for item in config["display"] if item["id"] == "board_display")
+        display["lambda"] = (
+            f'it.print(32, 17, id(title_font), Color::BLACK, "{title}");\n'
+            'it.printf(32, 100, id(detail_font), Color::BLACK, "Within %s NM", "${radius_nm}");'
+        )
+        next(item for item in config["font"] if item["id"] == "title_font")["size"] = size
+        config["substitutions"]["radius_nm"] = radius
+        config_path = self.output / f"{name}.yaml"
+        config_path.write_text(yaml.safe_dump(config))
+        return build(config_path=config_path, output=self.output / name)[0]
+
+    def test_text_and_substitution_edits_reach_preview(self):
+        before = self.build_controlled_layout("text-before")
+        after = self.build_controlled_layout("text-after", title="Flight test", radius="25")
+        self.assertEqual([command["text"] for command in before["commands"]], ["Preview title", "Within 10 NM"])
+        self.assertEqual([command["text"] for command in after["commands"]], ["Flight test", "Within 25 NM"])
+        self.assertNotEqual(before["image"], after["image"])
+
+    def test_font_size_alone_changes_preview(self):
+        before = self.build_controlled_layout("font-before", size=40)
+        after = self.build_controlled_layout("font-after", size=20)
+        self.assertEqual(before["commands"], after["commands"])
+        self.assertNotEqual(before["image"], after["image"])
 
     def test_sample_rows_sort_and_status_takes_precedence(self):
         config, drawing = read_config(ROOT / "overhead.yaml")
