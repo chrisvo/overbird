@@ -1,0 +1,22 @@
+[
+  {
+    "id": "busy", "label": "Busy sky", "description": "Six visible flights, with two more in range.",
+    "aircraft": [
+      ["SWA1482", "B738", "12400", "312", 1.2],
+      ["UAL934", "B789", "35000", "486", 2.8],
+      ["N172SP", "C172", "2400", "108", 3.4],
+      ["DAL281", "A321", "18200", "376", 4.7],
+      ["ASA617", "B739", "28400", "441", 6.1],
+      ["FDX502", "B763", "31000", "462", 7.6],
+      ["AAL902", "A320", "22000", "405", 8.3],
+      ["N842GA", "GLF6", "41000", "493", 9.5]
+    ]
+  },
+  {"id": "single", "label": "One aircraft", "description": "A quiet board with one nearby flight.", "aircraft": [["N172SP", "C172", "2400", "108", 0.8]]},
+  {"id": "edge", "label": "Long / missing data", "description": "Long labels, missing values, and a flight at the range limit.", "aircraft": [["LONGCALLSIGN", "TYPE123", "-", "-", 0.0], ["abcdef", "-", "45000", "512", 9.9], ["N123456789", "B77W", "100000", "1000", 10.0]]},
+  {"id": "empty", "label": "Empty sky", "description": "The feed succeeds but there are no nearby aircraft.", "aircraft": []},
+  {"id": "wifi", "label": "Waiting for Wi-Fi", "description": "Startup or disconnected Wi-Fi.", "status": "Waiting for Wi-Fi"},
+  {"id": "unavailable", "label": "Feed unavailable", "description": "The flight request fails.", "status": "Flight feed unavailable"},
+  {"id": "quota", "label": "Feed quota reached", "description": "The feed returns a rate-limit response.", "status": "Feed quota reached"},
+  {"id": "invalid", "label": "Invalid flight data", "description": "The feed response cannot be parsed.", "status": "Invalid flight data"}
+]
