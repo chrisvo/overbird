@@ -11,6 +11,8 @@
 #include <tuple>
 #include <vector>
 
+#include "aircraft_types.h"
+
 namespace overhead {
 
 enum class View { RADAR, SPOTLIGHT, CARDS, COUNT };
@@ -110,10 +112,24 @@ struct Aircraft {
   std::string feed_id{};
   std::array<std::optional<Position>, 2> history{};
   uint32_t history_at_ms = 0;
+  AircraftKind kind = aircraft_kind_for(type);
+
+  void apply_emitter_category(std::string_view category) {
+    if (category == "A7") kind = AircraftKind::ROTORCRAFT;
+    if (category == "B1" && kind == AircraftKind::UNKNOWN) kind = AircraftKind::NON_JET;
+  }
 
   bool operator<(const Aircraft &other) const {
-    return std::tie(position.distance_nm, callsign, type) <
-           std::tie(other.position.distance_nm, other.callsign, other.type);
+    const double distance = slant_distance_squared();
+    const double other_distance = other.slant_distance_squared();
+    return std::tie(distance, callsign, type) < std::tie(other_distance, other.callsign, other.type);
+  }
+
+ private:
+  double slant_distance_squared() const {
+    constexpr double FEET_TO_NM = 0.3048 / 1852.0;
+    const double height_nm = std::max(0, altitude_ft.value_or(0)) * FEET_TO_NM;
+    return position.distance_nm * position.distance_nm + height_nm * height_nm;
   }
 };
 

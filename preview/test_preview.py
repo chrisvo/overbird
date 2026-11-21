@@ -24,15 +24,22 @@ class PreviewTests(unittest.TestCase):
 
     def test_busy_sky_shows_nearest_first_and_reports_overflow(self):
         cards = self.texts("cards-busy")
-        expected = ["SWA1482", "UAL934", "N172SP", "DAL281", "ASA617", "FDX502"]
+        expected = ["SWA1482", "N172SP", "DAL281", "UAL934", "ASA617", "AAL902"]
         self.assertEqual([value for value in cards if value in expected], expected)
-        self.assertNotIn("AAL902", cards)
+        self.assertNotIn("FDX502", cards)
         self.assertIn("+2 more", cards)
         self.assertIn("12,400", cards)
         for view in ("radar", "spotlight"):
             text = self.texts(f"{view}-busy")
             self.assertIn("+4 more", text)
             self.assertTrue(set(expected[:4]).issubset(text))
+
+    def test_all_views_rank_by_ground_distance_and_altitude(self):
+        expected = ["N172SP", "DAL281", "UAL934", "N204AB"]
+        for view in ("radar", "spotlight", "cards"):
+            with self.subTest(view=view):
+                text = self.texts(f"{view}-altitude")
+                self.assertEqual([value for value in text if value in expected], expected)
 
     def test_empty_and_failure_states(self):
         expected = {
@@ -154,14 +161,30 @@ class PreviewTests(unittest.TestCase):
             self.assertEqual(image.getpixel((309, 277)), 255)  # South-facing nose.
             self.assertEqual(image.getpixel((311, 277)), 0)
             self.assertEqual(image.getpixel((311, 253)), 255)  # Tail on the north side.
-            self.assertEqual(image.getpixel((495, 322)), 0)    # Same south-facing jet in the sidebar.
-            self.assertEqual(image.getpixel((497, 322)), 255)
-            self.assertEqual(image.getpixel((497, 298)), 0)
-        with Image.open(self.output / "radar-single.png") as image:
-            self.assertEqual(image.getpixel((238, 268)), 255)  # Unknown track ring.
-            self.assertEqual(image.getpixel((238, 260)), 0)    # No north-facing nose.
-            self.assertEqual(image.getpixel((505, 116)), 255)  # Sidebar also uses a ring.
-            self.assertEqual(image.getpixel((505, 108)), 0)
+            self.assertEqual(image.getpixel((495, 298)), 0)    # Upright silhouette in the sidebar.
+            self.assertEqual(image.getpixel((497, 298)), 255)
+            self.assertEqual(image.getpixel((497, 322)), 0)
+
+    def test_aircraft_icons_distinguish_rotorcraft_prop_planes_jets_and_unknown_types(self):
+        with Image.open(self.output / "cards-aircraft-icons.png") as image:
+            icons = [image.crop((x - 11, y - 12, x + 12, y + 13)).tobytes()
+                     for y in (121, 275) for x in (148, 400, 652)]
+            self.assertEqual(icons[0], icons[3])  # Model and emitter category identify the same rotor icon.
+            self.assertEqual(icons[1], icons[4])  # Piston and turboprop use the straight-wing icon.
+            self.assertEqual(len(set(icons)), 4)
+            self.assertEqual(image.getpixel((141, 113)), 255)  # Rotor tip.
+            self.assertEqual(image.getpixel((390, 119)), 255)  # Straight wingtip.
+            self.assertEqual(image.getpixel((646, 126)), 255)  # Jet engine.
+            self.assertEqual(image.getpixel((648, 126)), 0)    # Gap beside the engine.
+        with Image.open(self.output / "spotlight-aircraft-icons.png") as image:
+            self.assertEqual(image.getpixel((393, 227)), 255)  # Rotor tip on the featured aircraft.
+            self.assertEqual(image.getpixel((390, 245)), 0)
+        with Image.open(self.output / "radar-aircraft-icons.png") as image:
+            self.assertEqual(image.getpixel((255, 255)), 255)  # East-facing rotorcraft nose.
+            self.assertEqual(image.getpixel((245, 244)), 0)
+            self.assertEqual(image.getpixel((245, 315)), 255)  # The second rotorcraft has no ground track.
+            self.assertEqual(image.getpixel((245, 319)), 0)
+            self.assertEqual(image.getpixel((488, 380)), 0)    # It still has a rotor in the sidebar.
 
     def test_radar_separates_crowded_markers_and_keeps_east_visible(self):
         commands = self.states["radar-crowded"]["commands"]
@@ -170,9 +193,9 @@ class PreviewTests(unittest.TestCase):
             for command in commands
             if command["kind"] == "text" and command["text"].isdigit() and command["x"] < 462
         }
-        self.assertEqual(markers, {"1": (237, 265), "2": (253, 265), "3": (307, 236), "4": (391, 265)})
+        self.assertEqual(markers, {"1": (253, 265), "2": (237, 265), "3": (307, 236), "4": (391, 265)})
         with Image.open(self.output / "radar-crowded.png") as image:
-            self.assertEqual(image.getpixel((271, 253)), 255)  # Unshifted nose.
+            self.assertEqual(image.getpixel((271, 255)), 255)  # Unshifted prop plane nose.
             self.assertEqual(image.getpixel((289, 224)), 255)  # Shifted nose.
             self.assertTrue(all(image.getpixel((289, y)) == 255 for y in range(250, 266)))
             self.assertEqual(image.getpixel((288, 265)), 255)  # Position dot extends off the line.
