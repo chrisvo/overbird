@@ -73,6 +73,27 @@ class PollSchedule {
 
 constexpr double RADIANS_PER_DEGREE = 0.017453292519943295;
 
+inline std::string_view airline_for(std::string_view callsign) {
+  if (callsign.size() < 4 || callsign[3] < '0' || callsign[3] > '9') return {};
+  for (char character : callsign.substr(4)) {
+    if (!(character >= '0' && character <= '9') && !(character >= 'A' && character <= 'Z')) return {};
+  }
+  static constexpr std::pair<std::string_view, std::string_view> airlines[] = {
+      {"AAL", "American"},    {"AAY", "Allegiant"},   {"ACA", "Air Canada"},    {"AFR", "Air France"},
+      {"ASA", "Alaska"},      {"BAW", "British Airways"}, {"DAL", "Delta"},    {"DLH", "Lufthansa"},
+      {"FDX", "FedEx"},       {"FFT", "Frontier"},    {"HAL", "Hawaiian"},      {"JAL", "Japan Airlines"},
+      {"JBU", "JetBlue"},     {"KAL", "Korean Air"},  {"KLM", "KLM"},           {"NKS", "Spirit"},
+      {"QFA", "Qantas"},      {"QTR", "Qatar Airways"}, {"SCX", "Sun Country"}, {"SKW", "SkyWest"},
+      {"SWA", "Southwest"},   {"UAL", "United"},      {"UPS", "UPS"},           {"VOI", "Volaris"},
+      {"WJA", "WestJet"},
+  };
+  const auto prefix = callsign.substr(0, 3);
+  for (const auto &[designator, name] : airlines) {
+    if (prefix == designator) return name;
+  }
+  return {};
+}
+
 struct Position {
   double distance_nm;
   double bearing_radians;
@@ -98,6 +119,8 @@ struct Aircraft {
   std::string type;
   std::optional<int> altitude_ft;
   std::optional<long> speed_kt;
+  std::optional<double> ground_track;
+  std::string_view airline;
 
   bool operator<(const Aircraft &other) const {
     return std::tie(position.distance_nm, callsign, type) <

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Overhead virtual display</title>
+  <title>Overbird virtual display</title>
   <style>
     :root { color-scheme: light dark; font-family: var(--font-sans, system-ui, sans-serif); color: var(--foreground, light-dark(#242424, #eee)); }
     body { margin: 0; }
@@ -47,10 +47,10 @@
       </div>
       <button id="zoom" type="button" aria-pressed="false">View at 1:1</button>
       <button id="frame" type="button" aria-pressed="true">Device frame</button>
-      <a id="download" class="download" download="overhead.png">Save PNG</a>
+      <a id="download" class="download" download="overbird.png">Save PNG</a>
     </div>
     <div class="viewport">
-      <div class="device" id="device"><div class="screen"><img id="display" width="800" height="480" alt="Overhead flight board"></div></div>
+      <div class="device" id="device"><div class="screen"><img id="display" width="800" height="480" alt="Overbird flight board"></div></div>
     </div>
     <div class="footnote"><span>Seeed reTerminal E1001 · 800 × 480 · 1-bit</span><span>Sample data</span></div>
     <p id="description" aria-live="polite"></p>
@@ -71,7 +71,7 @@
       const viewName = preview.views[view];
       const state = preview.states.find(state => state.scene === scene.value && state.view === view);
       display.src = state.image;
-      display.alt = `Overhead ${viewName} · ${state.label}`;
+      display.alt = `Overbird ${viewName} · ${state.label}`;
       document.querySelector('#view-name').textContent = viewName;
       document.querySelector('#description').textContent = state.description;
       const warnings = document.querySelector('#warnings');
@@ -79,7 +79,7 @@
       warnings.hidden = !state.warnings.length;
       const download = document.querySelector('#download');
       download.href = state.image;
-      download.download = `overhead-${state.id}.png`;
+      download.download = `overbird-${state.id}.png`;
     }
     scene.addEventListener('change', renderScene);
     function stepView(direction) {

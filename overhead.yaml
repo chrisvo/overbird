@@ -1,6 +1,6 @@
 esphome:
   name: overhead
-  friendly_name: Overhead
+  friendly_name: Overbird
   min_version: 2026.11.0
   includes:
     - <overhead.h>  # Declare the board types before ESPHome generates the globals.
@@ -205,12 +205,17 @@ script:
                           std::string label = plane["flight"] | "";
                           const auto end = label.find_last_not_of(' ');
                           label = end == std::string::npos ? "" : label.substr(0, end + 1);
+                          const auto airline = overhead::airline_for(label);
                           if (label.empty()) label = plane["r"] | "";
                           if (label.empty()) label = plane["hex"] | "-";
 
-                          overhead::Aircraft flight{position, label, plane["t"] | "-", {}, {}};
+                          overhead::Aircraft flight{position, label, plane["t"] | "-", {}, {}, {}, airline};
                           if (plane["alt_baro"].is<int>()) flight.altitude_ft = plane["alt_baro"].as<int>();
                           if (plane["gs"].is<double>()) flight.speed_kt = std::lround(plane["gs"].as<double>());
+                          if (plane["track"].is<double>()) {
+                            const auto track = plane["track"].as<double>();
+                            if (track >= 0 && track < 360) flight.ground_track = track;
+                          }
                           flights.push_back(std::move(flight));
                         }
                         std::sort(flights.begin(), flights.end());
@@ -268,7 +273,7 @@ display:
       const auto view = id(board_view);
       constexpr double range_nm = ${radius_nm};
 
-      it.print(28, 12, id(title_font), ink, "Overhead");
+      it.print(28, 12, id(title_font), ink, "Overbird");
       if (status.empty()) {
         it.printf(772, 20, id(value_font), ink, TextAlign::TOP_RIGHT, "%u aircraft",
                   static_cast<unsigned>(flights.size()));
@@ -276,7 +281,6 @@ display:
       it.printf(772, 52, id(label_font), ink, TextAlign::TOP_RIGHT, "%g NM RADIUS", range_nm);
       it.horizontal_line(28, 86, 744, ink);
       it.horizontal_line(28, 438, 744, ink);
-      it.print(28, 449, id(label_font), ink, "adsb.lol");
       const char *tabs[] = {"RADAR", "SPOTLIGHT", "FLIGHT CARDS"};
       const int tab_x[] = {478, 548, 650};
       const int tab_width[] = {65, 98, 122};
@@ -309,21 +313,26 @@ display:
                     static_cast<unsigned>(flights.size() - shown));
         }
       };
+      constexpr int jet_half_widths[] = {
+        0, 1, 2, 2, 2, 2, 2, 2, 3, 5, 7, 9, 11, 11, 9, 7, 2, 2, 2, 2, 2, 4, 6, 6, 2
+      };
       const auto draw_jet = [&](int x, int y, int scale, int outline, Color color) {
         const auto stroke = [&](int left, int top, int width, int height) {
           it.filled_rectangle(x + left * scale - outline, y + top * scale - outline,
                               width * scale + 2 * outline, height * scale + 2 * outline, color);
         };
-        constexpr int half_widths[] = {
-          0, 1, 2, 2, 2, 2, 2, 2, 3, 5, 7, 9, 11, 11, 9, 7, 2, 2, 2, 2, 2, 4, 6, 6, 2
-        };
         for (int row = 0; row < 25; ++row) {
-          const int half_width = half_widths[row];
+          const int half_width = jet_half_widths[row];
           stroke(-half_width, row - 12, 2 * half_width + 1, 1);
         }
         // Wing-mounted engines leave a gap on each side of the fuselage.
         stroke(-7, 2, 3, 5);
         stroke(5, 2, 3, 5);
+      };
+      const auto show_airline = [&](int x, int y, Color color, const overhead::Aircraft &flight) {
+        if (!flight.airline.empty()) {
+          it.printf(x, y, id(label_font), color, "%.*s", int(flight.airline.size()), flight.airline.data());
+        }
       };
 
       if (view == overhead::View::RADAR) {
@@ -357,12 +366,48 @@ display:
           return;
         }
 
-        const auto numbered_plane = [&](int x, int y, unsigned number, Color foreground, Color background,
-                                        int label_offset = 18) {
-          draw_jet(x, y, 1, 1, background);
-          it.filled_rectangle(x + label_offset - 6, y - 8, 13, 17, background);
+        const auto show_number = [&](int x, int y, unsigned number, Color foreground, Color background) {
+          it.filled_rectangle(x - 6, y - 8, 13, 17, background);
+          it.printf(x, y, id(label_font), foreground, TextAlign::CENTER, "%u", number);
+        };
+        const auto numbered_plane = [&](int x, int y, unsigned number, Color foreground, Color background) {
           draw_jet(x, y, 1, 0, foreground);
-          it.printf(x + label_offset, y, id(label_font), foreground, TextAlign::CENTER, "%u", number);
+          show_number(x + 18, y, number, foreground, background);
+        };
+        const auto show_ground_track = [&](int x, int y, std::optional<double> track) {
+          if (!track) {
+            it.filled_circle(x, y, 7, ink);
+            it.circle(x, y, 4, paper);
+            return;
+          }
+
+          // Sample the north-facing silhouette in reverse to avoid holes when rotating.
+          // Keep its outline inside the same bounds used to place the numbered markers.
+          const double angle = *track * overhead::RADIANS_PER_DEGREE;
+          const double cosine = std::cos(angle), sine = std::sin(angle);
+          bool pixels[25][23] = {};
+          for (int row = -12; row <= 12; ++row) {
+            for (int column = -11; column <= 11; ++column) {
+              const int sx = std::lround(column * cosine + row * sine);
+              const int sy = std::lround(row * cosine - column * sine);
+              const bool body = sy >= -12 && sy <= 12 && std::abs(sx) <= jet_half_widths[sy + 12];
+              const bool engine = sy >= 2 && sy <= 6 && std::abs(sx) >= 5 && std::abs(sx) <= 7;
+              pixels[row + 12][column + 11] = body || engine;
+            }
+          }
+          for (int halo : {1, 0}) {
+            for (int row = 0; row < 25; ++row) {
+              int start = 0;
+              for (int column = 0; column <= 23; ++column) {
+                if (column < 23 && pixels[row][column]) continue;
+                if (column > start) {
+                  it.filled_rectangle(x + start - 11 - halo, y + row - 12 - halo,
+                                      column - start + 2 * halo, 1 + 2 * halo, halo ? ink : paper);
+                }
+                start = column + 1;
+              }
+            }
+          }
         };
 
         struct ScopePoint { int x; int y; };
@@ -483,7 +528,8 @@ display:
         for (size_t i = 0; i < keyed; ++i) {
           const auto [x, y] = markers[i] ? markers[i]->icon : margin_markers[i];
           const int label_offset = markers[i] ? markers[i]->label_offset : 18;
-          numbered_plane(x, y, static_cast<unsigned>(i + 1), paper, ink, label_offset);
+          show_ground_track(x, y, flights[i].ground_track);
+          show_number(x + label_offset, y, static_cast<unsigned>(i + 1), paper, ink);
         }
 
         const auto &closest = flights.front();
@@ -494,7 +540,12 @@ display:
         it.printf(758, 110, id(label_font), paper, TextAlign::TOP_RIGHT,
                   "%.1f NM", closest.position.distance_nm);
         it.printf(498, 142, id(callsign_font), ink, "%.10s", closest.callsign.c_str());
-        it.printf(498, 176, id(label_font), ink, "%.6s", closest.type.c_str());
+        if (closest.airline.empty()) {
+          it.printf(498, 176, id(label_font), ink, "%.6s", closest.type.c_str());
+        } else {
+          show_airline(498, 176, ink, closest);
+          it.printf(758, 176, id(label_font), ink, TextAlign::TOP_RIGHT, "%.6s", closest.type.c_str());
+        }
         it.horizontal_line(498, 201, 260, ink);
         it.print(498, 209, id(label_font), ink, "ALT FT");
         it.print(758, 209, id(label_font), ink, TextAlign::TOP_RIGHT, "SPD KT");
@@ -503,10 +554,11 @@ display:
         if (keyed > 1) {
           it.print(484, 274, id(label_font), ink, "ALSO IN RANGE");
           for (size_t i = 1; i < keyed; ++i) {
-            const int y = 307 + 35 * (i - 1);
-            it.horizontal_line(484, y - 5, 288, ink);
+            const int y = 299 + 39 * (i - 1);
+            it.horizontal_line(484, y - 3, 288, ink);
             numbered_plane(495, y + 11, static_cast<unsigned>(i + 1), ink, paper);
             it.printf(524, y, id(value_font), ink, "%.10s", flights[i].callsign.c_str());
+            show_airline(524, y + 18, ink, flights[i]);
             it.printf(772, y + 3, id(label_font), ink, TextAlign::TOP_RIGHT,
                       "%.1f NM", flights[i].position.distance_nm);
           }
@@ -521,6 +573,7 @@ display:
         it.print(51, 124, id(label_font), paper, "CLOSEST AIRCRAFT");
         it.printf(461, 124, id(label_font), paper, TextAlign::TOP_RIGHT, "%.6s", closest.type.c_str());
         it.printf(48, 146, id(spotlight_font), paper, "%.10s", closest.callsign.c_str());
+        show_airline(52, 199, paper, closest);
         it.printf(48, 207, id(distance_font), paper, "%.1f", closest.position.distance_nm);
         it.print(52, 289, id(label_font), paper, "NAUTICAL MILES AWAY");
         draw_jet(414, 251, 3, 0, paper);
@@ -547,7 +600,11 @@ display:
             const int y = 153 + 82 * (i - 1);
             it.horizontal_line(514, y, 258, ink);
             it.printf(514, y + 10, id(callsign_font), ink, "%.10s", flight.callsign.c_str());
-            it.printf(514, y + 44, id(label_font), ink, "%.6s", flight.type.c_str());
+            if (flight.airline.empty()) {
+              it.printf(514, y + 44, id(label_font), ink, "%.6s", flight.type.c_str());
+            } else {
+              show_airline(514, y + 44, ink, flight);
+            }
             it.printf(772, y + 44, id(label_font), ink, TextAlign::TOP_RIGHT,
                       "%.1f NM", flight.position.distance_nm);
           }
@@ -568,7 +625,8 @@ display:
         it.printf(x + 226, y + 7, id(label_font), paper, TextAlign::TOP_RIGHT,
                   "%.1f NM", flight.position.distance_nm);
         const auto font = flight.callsign.size() > 8 ? id(value_font) : id(callsign_font);
-        it.printf(x + 14, y + 43, font, ink, "%.10s", flight.callsign.c_str());
+        it.printf(x + 14, y + (flight.airline.empty() ? 43 : 37), font, ink, "%.10s", flight.callsign.c_str());
+        show_airline(x + 14, y + 64, ink, flight);
         it.horizontal_line(x + 14, y + 83, 212, ink);
         it.print(x + 14, y + 92, id(label_font), ink, "ALT FT");
         it.print(x + 226, y + 92, id(label_font), ink, TextAlign::TOP_RIGHT, "SPD KT");
