@@ -160,6 +160,7 @@ class PreviewTests(unittest.TestCase):
             ("right_button", "cards", "RADAR"),
             ("right_button", "radar", "SPOTLIGHT"),
             ("green_button", "spotlight", "RADAR"),
+            ("green_button", "cards", "RADAR"),
         ):
             with self.subTest(button=button, view=view):
                 commands, = record_commands(config, presses[button] + "\n" + drawing, [{"view": view}])
