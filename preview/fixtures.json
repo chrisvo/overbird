@@ -1,21 +1,26 @@
 [
   {
-    "id": "busy", "label": "Busy sky", "description": "Six visible flights, with two more in range.",
+    "id": "busy", "label": "Busy sky", "description": "Eight flights distributed across the 10 NM range.",
     "aircraft": [
-      ["SWA1482", "B738", "12400", "312", 1.2],
-      ["UAL934", "B789", "35000", "486", 2.8],
-      ["N172SP", "C172", "2400", "108", 3.4],
-      ["DAL281", "A321", "18200", "376", 4.7],
-      ["ASA617", "B739", "28400", "441", 6.1],
-      ["FDX502", "B763", "31000", "462", 7.6],
-      ["AAL902", "A320", "22000", "405", 8.3],
-      ["N842GA", "GLF6", "41000", "493", 9.5]
+      ["SWA1482", "B738", 12400, 312, 1.2, 47],
+      ["UAL934", "B789", 35000, 486, 2.8, 285],
+      ["N172SP", "C172", 2400, 108, 3.4, 152],
+      ["DAL281", "A321", 18200, 376, 4.7, 30],
+      ["ASA617", "B739", 28400, 441, 6.1, 110],
+      ["FDX502", "B763", 31000, 462, 7.6, 218],
+      ["AAL902", "A320", 22000, 405, 8.3, 318],
+      ["N842GA", "GLF6", 41000, 493, 9.5, 73]
     ]
   },
-  {"id": "single", "label": "One aircraft", "description": "A quiet board with one nearby flight.", "aircraft": [["N172SP", "C172", "2400", "108", 0.8]]},
-  {"id": "edge", "label": "Long / missing data", "description": "Long labels, missing values, and a flight at the range limit.", "aircraft": [["LONGCALLSIGN", "TYPE123", "-", "-", 0.0], ["abcdef", "-", "45000", "512", 9.9], ["N123456789", "B77W", "100000", "1000", 10.0]]},
+  {"id": "single", "label": "One aircraft", "description": "A quiet board with one nearby flight.", "aircraft": [["N172SP", "C172", 2400, 108, 0.8, 225]]},
+  {"id": "edge", "label": "Long / missing data", "description": "Long labels, missing values, and a flight at the range limit.", "aircraft": [["LONGCALLSIGN", "TYPE123", null, null, 0.0, 0], ["abcdef", "-", 45000, 512, 9.9, 180], ["N123456789", "B77W", 100000, 1000, 10.0, 300]]},
+  {"id": "compass", "label": "Compass points", "description": "Four flights due north, east, south, and west at increasing distances.", "aircraft": [["NORTH", "C172", 2200, 84, 2.5, 0], ["EAST", "B738", 11000, 309, 5.0, 90], ["SOUTH", "A321", 16400, 388, 7.5, 180], ["WEST", "E75L", 14000, 276, 10.0, 270]]},
+  {"id": "crowded", "label": "Crowded radar", "description": "Two aircraft on the same approach, one to the west, and one at the east range limit.", "aircraft": [["WESTNEAR", "B738", 4000, 220, 2.0, 270], ["EASTNEAR", "C172", 2400, 108, 2.05, 90], ["FOLLOW", "A321", 7000, 246, 3.44, 90], ["ATLIMIT", "E75L", 9000, 260, 10, 90]]},
+  {"id": "east-traffic", "label": "East traffic", "description": "Four aircraft on different bearings in the east sector.", "aircraft": [["NEAR", "B738", 4000, 220, 5.8, 92], ["NORTHEAST", "C172", 2400, 108, 7.6, 67], ["SOUTHEAST", "A321", 7000, 246, 8.4, 113], ["EAST", "E75L", 9000, 260, 8.5, 87]]},
+  {"id": "coincident", "label": "Shared position", "description": "Four aircraft report the same radar position at different altitudes.", "aircraft": [["A1", "B738", 4000, 220, 9.9, 0], ["A2", "C172", 2400, 108, 9.9, 0], ["A3", "A321", 7000, 246, 9.9, 0], ["A4", "E75L", 9000, 260, 9.9, 0]]},
   {"id": "empty", "label": "Empty sky", "description": "The feed succeeds but there are no nearby aircraft.", "aircraft": []},
   {"id": "wifi", "label": "Waiting for Wi-Fi", "description": "Startup or disconnected Wi-Fi.", "status": "Waiting for Wi-Fi"},
+  {"id": "clock", "label": "Waiting for clock", "description": "Wi-Fi is connected and the board is preparing its first flight request.", "status": "Waiting for flight data"},
   {"id": "unavailable", "label": "Feed unavailable", "description": "The flight request fails.", "status": "Flight feed unavailable"},
   {"id": "quota", "label": "Feed quota reached", "description": "The feed returns a rate-limit response.", "status": "Feed quota reached"},
   {"id": "invalid", "label": "Invalid flight data", "description": "The feed response cannot be parsed.", "status": "Invalid flight data"}

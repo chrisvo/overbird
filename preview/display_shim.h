@@ -80,5 +80,7 @@ struct Display {
   void vertical_line(int x, int y, int h, Color color) { shape("rectangle", x, y, 1, h, color); }
   void rectangle(int x, int y, int w, int h, Color color) { shape("rectangle", x, y, w, h, color); }
   void filled_rectangle(int x, int y, int w, int h, Color color) { shape("fill", x, y, w, h, color); }
+  void circle(int x, int y, int radius, Color color) { shape("circle", x, y, radius, radius, color); }
+  void filled_circle(int x, int y, int radius, Color color) { shape("filled_circle", x, y, radius, radius, color); }
   void fill(Color color) { filled_rectangle(0, 0, get_width(), get_height(), color); }
 };
