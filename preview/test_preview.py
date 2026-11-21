@@ -35,13 +35,31 @@ class PreviewTests(unittest.TestCase):
             self.assertTrue(set(expected[:4]).issubset(text))
 
     def test_empty_and_failure_states(self):
-        expected = {"empty": "No aircraft in range", "wifi": "Waiting for Wi-Fi", "clock": "Waiting for flight data", "unavailable": "Flight feed unavailable", "quota": "Feed quota reached", "invalid": "Invalid flight data"}
+        expected = {
+            "empty": "No aircraft in range",
+            "wifi": "Waiting for Wi-Fi",
+            "clock": "Waiting for flight data",
+            "unavailable": "Flight feed unavailable",
+            "receiver-stale": "Flight feed stale",
+            "quota": "Feed quota reached",
+            "invalid": "Invalid flight data",
+        }
         for scene, message in expected.items():
             for view in ("radar", "spotlight", "cards"):
                 with self.subTest(scene=scene, view=view):
                     text = self.texts(f"{view}-{scene}")
                     self.assertIn(message, text)
                     self.assertNotIn("CLOSEST AIRCRAFT", text)
+
+    def test_live_radar_shows_snapshot_time_and_keeps_stale_tracks(self):
+        self.assertIn("UPDATED 14:32:10 UTC", self.texts("radar-empty"))
+        self.assertIn("STALE", self.texts("radar-stale"))
+        self.assertIn("14:32:10 UTC · NO NEW DATA", self.texts("radar-stale"))
+        self.assertIn("SWA1482", self.texts("radar-stale"))
+        commands = self.states["radar-stale"]["commands"]
+        self.assertIn({"kind": "circle", "color": "white", "x": 194, "y": 278, "w": 3, "h": 3}, commands)
+        self.assertIn("14:32:10 UTC · INVALID FEED DATA", self.texts("radar-invalid-retained"))
+        self.assertIn("SWA1482", self.texts("radar-invalid-retained"))
 
     def test_native_format_truncates_long_labels_and_preserves_missing_data(self):
         for view in ("radar", "spotlight", "cards"):
@@ -211,35 +229,22 @@ class PreviewTests(unittest.TestCase):
         commands, = record_commands(config, drawing, [{}])
         self.assertEqual([command["text"] for command in commands], ["3.002 NM at 0 deg", "6.004 NM at 90 deg"])
 
-    def test_polling_speeds_up_for_aircraft_and_backs_off(self):
+    def test_receiver_polling_runs_every_ten_seconds_and_backs_off(self):
         config, _ = read_config(ROOT / "overhead.yaml")
         drawing = """
         overhead::PollSchedule poll;
-        if (!poll.ready(0)) return;
-        poll.record_attempt(0);
-        poll.finish(0, false);
-        if (poll.ready(299999) || !poll.ready(300000)) return;
-
-        poll.record_attempt(300000);
-        poll.finish(300250, true);
-        if (poll.ready(360249) || !poll.ready(360250)) return;
-
-        poll.record_attempt(360250);
-        poll.rate_limited(360500, "1800");
-        poll.finish(360500, false);
-        if (poll.ready(2160499) || !poll.ready(2160500)) return;
-
-        poll.record_attempt(2160500);
-        poll.rate_limited(2160500, "invalid");
-        poll.finish(2160500, false);
-        if (poll.ready(88560499) || !poll.ready(88560500)) return;
+        if (!poll.record_attempt(0) || poll.record_attempt(9999) || !poll.record_attempt(10000)) return;
+        poll.back_off(10250);
+        if (poll.ready(40249) || !poll.record_attempt(40250)) return;
+        poll.back_off(40500, true);
+        if (poll.ready(340499) || !poll.record_attempt(340500)) return;
 
         it.print(0, 0, id(label_font), Color::BLACK, "Cadence and backoff verified");
         """
         commands, = record_commands(config, drawing, [{}])
         self.assertEqual([command["text"] for command in commands], ["Cadence and backoff verified"])
 
-    def test_daily_request_budget_and_retry_survive_reboot(self):
+    def test_receiver_retry_after_survives_reboot(self):
         config, _ = read_config(ROOT / "overhead.yaml")
         drawing = """
         overhead::PollSchedule poll;
@@ -249,22 +254,33 @@ class PreviewTests(unittest.TestCase):
           poll = {};
           std::copy(saved.begin(), saved.end(), reinterpret_cast<unsigned char *>(&poll));
         };
-        unsigned requests = 0;
-        for (uint64_t now = 0; now < 86400000; now += 1000) {
-          if (now == 43200000) reboot();
-          if (!poll.ready(now)) continue;
-          poll.record_attempt(now);
-          poll.finish(now, true);
-          ++requests;
-        }
-        it.printf(0, 0, id(label_font), Color::BLACK, "%u requests in 24 hours", requests);
-        if (!poll.record_attempt(86400000)) return;
-        poll.rate_limited(86400000, "1800");
+        if (!poll.record_attempt(0)) return;
+        poll.rate_limited(250, "1800");
         reboot();
-        if (!poll.waiting_for_quota(88199999) || poll.ready(88199999) || !poll.ready(88200000)) return;
+        if (!poll.waiting_for_quota(1800249) || poll.ready(1800249) || !poll.record_attempt(1800250)) return;
+        poll.rate_limited(1800500, "invalid");
+        if (poll.ready(1860499) || !poll.ready(1860500)) return;
         it.print(0, 20, id(label_font), Color::BLACK, "Retry respected after reboot");
         """
         commands, = record_commands(config, drawing, [{}])
-        self.assertEqual([command["text"] for command in commands], [
-            "491 requests in 24 hours", "Retry respected after reboot",
-        ])
+        self.assertEqual([command["text"] for command in commands], ["Retry respected after reboot"])
+
+    def test_radar_keeps_trail_samples_spaced_during_ten_second_updates(self):
+        config, _ = read_config(ROOT / "overhead.yaml")
+        drawing = """
+        overhead::FlightSnapshot snapshot;
+        for (int step = 0; step < 6; ++step) {
+          overhead::FlightSnapshot next;
+          next.received_at_ms = step * 10000;
+          next.flights.push_back({{double(step), 0}, "ABC123", "-", {}, {}, {}, {}, "abc123"});
+          next.carry_history(snapshot);
+          snapshot = std::move(next);
+        }
+        const auto &trail = snapshot.flights.front().history;
+        if (trail[0] && trail[1]) {
+          it.printf(28, 50, id(label_font), Color::BLACK, "Previous positions %.1f and %.1f NM",
+                    trail[0]->distance_nm, trail[1]->distance_nm);
+        }
+        """
+        commands, = record_commands(config, drawing, [{}])
+        self.assertEqual([command["text"] for command in commands], ["Previous positions 3.0 and 0.0 NM"])

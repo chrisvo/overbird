@@ -9,7 +9,7 @@ esphome:
     priority: -100
     then:
       - lambda: |-
-          id(poll_storage) = global_preferences->make_preference<overhead::PollSchedule>(0x3642E591);
+          id(poll_storage) = global_preferences->make_preference<overhead::PollSchedule>(0x4AC2E26B);
           id(poll_storage).load(&id(poll_schedule));
       - script.execute: redraw_board
 
@@ -32,14 +32,17 @@ time:
   - platform: sntp
     id: flight_clock
     timezone: UTC
+    servers: ${time_servers}
 
 http_request:
   timeout: 8s
+  useragent: Overhead/1.0
 
 json:
 
 substitutions:
   radius_nm: "10"
+  time_servers: [0.pool.ntp.org, 1.pool.ntp.org, 2.pool.ntp.org]
   home_latitude: !secret home_latitude
   home_longitude: !secret home_longitude
 
@@ -48,8 +51,8 @@ globals:
     type: overhead::PollSchedule
   - id: poll_storage
     type: esphome::ESPPreferenceObject
-  - id: aircraft
-    type: 'std::vector<overhead::Aircraft>'
+  - id: flight_snapshot
+    type: 'std::optional<overhead::FlightSnapshot>'
   - id: board_view
     type: overhead::View
     initial_value: 'overhead::View::RADAR'
@@ -66,9 +69,11 @@ interval:
               script.is_running: fetch_aircraft
           then:
             - lambda: |-
+                if (id(flight_snapshot) && !id(board_status).empty() && id(flight_snapshot)->expired(millis())) {
+                  id(redraw_board).execute();
+                }
                 const auto wait = [&](const char *message) {
                   if (id(board_status) == message) return;
-                  id(aircraft).clear();
                   id(board_status) = message;
                   id(redraw_board).execute();
                 };
@@ -131,6 +136,9 @@ script:
       - wait_until:
           condition:
             lambda: return !id(board_display).is_updating();
+      - lambda: |-
+          auto &snapshot = id(flight_snapshot);
+          if (snapshot && !id(board_status).empty() && snapshot->expired(millis())) snapshot.reset();
       - component.update: board_display
   - id: fetch_aircraft
     then:
@@ -143,53 +151,60 @@ script:
               - wifi.connected
               - lambda: |-
                   const auto now = id(flight_clock).utcnow();
-                  if (!now.is_valid() || !id(poll_schedule).record_attempt(uint64_t(now.timestamp) * 1000)) {
-                    return false;
-                  }
-                  if (id(poll_storage).save(&id(poll_schedule)) && global_preferences->sync()) return true;
-                  ESP_LOGW("overhead", "Unable to save flight request budget");
-                  return false;
+                  return now.is_valid() && id(poll_schedule).record_attempt(uint64_t(now.timestamp) * 1000);
           then:
             - http_request.get:
-                url: !lambda |-
-                  return "https://api.adsb.lol/v2/point/" +
-                         std::to_string(double(${home_latitude})) + "/" +
-                         std::to_string(double(${home_longitude})) + "/${radius_nm}";
+                url: !secret receiver_url
                 capture_response: true
                 collect_headers:
                   - Retry-After
-                max_response_buffer_size: 65536
+                max_response_buffer_size: 131072
                 on_response:
                   - lambda: |-
-                      auto &flights = id(aircraft);
+                      auto &snapshot = id(flight_snapshot);
                       auto &status = id(board_status);
-                      flights.clear();
-                      if (response->status_code != 200) {
-                        if (response->status_code == 429) {
+                      const auto now = uint64_t(id(flight_clock).timestamp_now()) * 1000;
+                      const int code = response->status_code;
+                      if (code != 200) {
+                        ESP_LOGW("overhead", "Flight feed returned HTTP %d", code);
+                        if (code == 429) {
                           status = "Feed quota reached";
-                          const auto now = uint64_t(id(flight_clock).timestamp_now()) * 1000;
                           id(poll_schedule).rate_limited(now, response->get_response_header("Retry-After"));
                           if (!id(poll_storage).save(&id(poll_schedule)) || !global_preferences->sync()) {
                             ESP_LOGW("overhead", "Unable to save flight quota wait");
                           }
                         } else {
                           status = "Flight feed unavailable";
+                          id(poll_schedule).back_off(now, code >= 400 && code < 500);
                         }
                         return;
                       }
 
+                      overhead::FlightSnapshot next;
+                      auto &flights = next.flights;
+                      const char *failure = "Invalid flight data";
                       const bool valid = json::parse_json(body, [&](JsonObject root) {
-                        const auto aircraft = root["ac"].as<JsonArrayConst>();
-                        if (aircraft.isNull()) {
-                          return root["total"].is<int>() && root["total"].as<int>() == 0;
+                        const auto aircraft = root["aircraft"].as<JsonArrayConst>();
+                        if (aircraft.isNull() || !root["now"].is<double>()) return false;
+                        const double snapshot_age = double(now) / 1000 - root["now"].as<double>();
+                        if (snapshot_age > 30) {
+                          failure = "Flight feed stale";
+                          return false;
                         }
+                        if (!(snapshot_age >= -10)) return false;
 
                         for (JsonObjectConst plane : aircraft) {
                           if (!plane["lat"].is<double>() || !plane["lon"].is<double>() ||
-                              !plane["seen_pos"].is<double>() || plane["seen_pos"].as<double>() > 30 ||
-                              std::string(plane["alt_baro"] | "") == "ground") {
+                              !plane["seen_pos"].is<double>()) {
                             continue;
                           }
+                          const double position_age = plane["seen_pos"].as<double>();
+                          if (!(position_age >= 0 && position_age + std::max(0.0, snapshot_age) <= 30)) continue;
+
+                          // dump1090-mutability uses altitude/speed. Newer dump1090 and readsb use alt_baro/gs.
+                          const auto altitude = plane["alt_baro"].isNull() ? plane["altitude"] : plane["alt_baro"];
+                          const auto speed = plane["gs"].isNull() ? plane["speed"] : plane["gs"];
+                          if (std::string_view(altitude | "") == "ground") continue;
 
                           const auto latitude = plane["lat"].as<double>();
                           const auto longitude = plane["lon"].as<double>();
@@ -209,9 +224,10 @@ script:
                           if (label.empty()) label = plane["r"] | "";
                           if (label.empty()) label = plane["hex"] | "-";
 
-                          overhead::Aircraft flight{position, label, plane["t"] | "-", {}, {}, {}, airline};
-                          if (plane["alt_baro"].is<int>()) flight.altitude_ft = plane["alt_baro"].as<int>();
-                          if (plane["gs"].is<double>()) flight.speed_kt = std::lround(plane["gs"].as<double>());
+                          overhead::Aircraft flight{position, label, plane["t"] | "-", {}, {}, {}, airline,
+                                                    plane["hex"] | ""};
+                          if (altitude.is<int>()) flight.altitude_ft = altitude.as<int>();
+                          if (speed.is<double>()) flight.speed_kt = std::lround(speed.as<double>());
                           if (plane["track"].is<double>()) {
                             const auto track = plane["track"].as<double>();
                             if (track >= 0 && track < 360) flight.ground_track = track;
@@ -221,18 +237,21 @@ script:
                         std::sort(flights.begin(), flights.end());
                         return true;
                       });
-                      status = valid ? "" : "Invalid flight data";
+                      status = valid ? "" : failure;
                       if (valid) {
+                        next.received_at_ms = millis();
+                        next.updated_at = id(flight_clock).utcnow().strftime("%H:%M:%S UTC");
+                        if (snapshot && !next.flights.empty()) next.carry_history(*snapshot);
                         ESP_LOGI("overhead", "Flight board received %u nearby aircraft",
                                  static_cast<unsigned>(flights.size()));
+                        snapshot = std::move(next);
+                      } else {
+                        id(poll_schedule).back_off(now);
                       }
                 on_error:
                   - lambda: |-
-                      id(aircraft).clear();
                       id(board_status) = "Flight feed unavailable";
-            - lambda: |-
-                const auto now = uint64_t(id(flight_clock).timestamp_now()) * 1000;
-                id(poll_schedule).finish(now, id(board_status).empty() && !id(aircraft).empty());
+                      id(poll_schedule).back_off(uint64_t(id(flight_clock).timestamp_now()) * 1000);
             - script.execute: redraw_board
 
 font:
@@ -264,23 +283,37 @@ display:
     model: Seeed-reTerminal-E1001
     id: board_display
     update_interval: never
-    full_update_every: 12
+    full_update_every: 30
     lambda: |-
       const auto ink = Color::BLACK;
       const auto paper = Color::WHITE;
-      const auto &flights = id(aircraft);
+      const auto &snapshot = id(flight_snapshot);
+      static const std::vector<overhead::Aircraft> no_flights;
+      const auto &flights = snapshot ? snapshot->flights : no_flights;
       const auto &status = id(board_status);
+      const bool stale = snapshot && !status.empty();
       const auto view = id(board_view);
       constexpr double range_nm = ${radius_nm};
 
       it.print(28, 12, id(title_font), ink, "Overbird");
-      if (status.empty()) {
+      if (snapshot) {
         it.printf(772, 20, id(value_font), ink, TextAlign::TOP_RIGHT, "%u aircraft",
                   static_cast<unsigned>(flights.size()));
       }
       it.printf(772, 52, id(label_font), ink, TextAlign::TOP_RIGHT, "%g NM RADIUS", range_nm);
       it.horizontal_line(28, 86, 744, ink);
       it.horizontal_line(28, 438, 744, ink);
+      if (stale) {
+        it.filled_rectangle(28, 447, 54, 24, ink);
+        it.print(55, 449, id(label_font), paper, TextAlign::TOP_CENTER, "STALE");
+        it.printf(92, 449, id(label_font), ink, "%s · %s", snapshot->updated_at.c_str(),
+                  status == "Waiting for Wi-Fi" ? "WI-FI OFFLINE" :
+                  status == "Feed quota reached" ? "FEED QUOTA REACHED" :
+                  status == "Flight feed stale" ? "NO NEW DATA" :
+                  status == "Invalid flight data" ? "INVALID FEED DATA" : "FEED OFFLINE");
+      } else if (snapshot) {
+        it.printf(28, 449, id(label_font), ink, "UPDATED %s", snapshot->updated_at.c_str());
+      }
       const char *tabs[] = {"RADAR", "SPOTLIGHT", "FLIGHT CARDS"};
       const int tab_x[] = {478, 548, 650};
       const int tab_width[] = {65, 98, 122};
@@ -291,9 +324,9 @@ display:
                  TextAlign::TOP_CENTER, tabs[i]);
       }
 
-      if (!status.empty() || (flights.empty() && view != overhead::View::RADAR)) {
+      if (!snapshot || (flights.empty() && view != overhead::View::RADAR)) {
         it.print(400, 226, id(callsign_font), ink, TextAlign::TOP_CENTER,
-                 status.empty() ? "No aircraft in range" : status.c_str());
+                 snapshot ? "No aircraft in range" : status.c_str());
         return;
       }
 
@@ -495,6 +528,23 @@ display:
           if (placed == keyed) break;
         } while (std::next_permutation(order, order + keyed));
         std::copy(best, best + keyed, markers);
+
+        for (size_t i = 0; i < keyed; ++i) {
+          auto from = contacts[i];
+          for (const auto &past : flights[i].history) {
+            if (!past || past->distance_nm > range_nm) break;
+            const auto to = on_scope(*past);
+            const int dx = to.x - from.x, dy = to.y - from.y;
+            const double length = std::hypot(dx, dy);
+            if (length < 8) continue;
+            for (int step = 6; step < length - 3; step += 6) {
+              it.filled_rectangle(from.x + std::lround(dx * step / length),
+                                  from.y + std::lround(dy * step / length), 2, 2, paper);
+            }
+            it.circle(to.x, to.y, 3, paper);
+            from = to;
+          }
+        }
 
         ScopePoint margin_markers[max_markers];
         bool margin_used[max_markers] = {};
