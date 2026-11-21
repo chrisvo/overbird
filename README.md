@@ -1,4 +1,4 @@
-# Overhead
+# Overbird
 
 An ESPHome flight board for the Seeed reTerminal E1001. The firmware configuration is in `overhead.yaml`.
 
@@ -6,7 +6,9 @@ An ESPHome flight board for the Seeed reTerminal E1001. The firmware configurati
 
 The two white buttons cycle backward and forward through **Radar**, **Spotlight**, and **Flight Cards**. The green button returns to Radar. All three views use the latest flight snapshot.
 
-Radar puts your configured location at the center, with true north at the top. The inner ring is half the selected range. Airplane icons mark the four closest aircraft and their numbers match the sidebar. When two icons would overlap, a line connects the shifted icon to its position. Other aircraft appear as dots.
+Radar puts your configured location at the center, with true north at the top. The inner ring is half the selected range. The four closest aircraft are numbered and their jets point along the reported ground track. A ring indicates a numbered aircraft with unknown track. When icons would overlap, a line connects a shifted icon to its position. Other aircraft appear as dots. [ADS-B field reference](https://github.com/wiedehopf/readsb/blob/dev/README-json.md)
+
+The views show an airline name beside the callsign when the board recognizes its three-letter designator. Aircraft with unrecognized callsigns or only a registration still show their identifier. [ICAO airline designators](https://www.icao.int/operational-safety/Designators-and-indicators)
 
 With aircraft in range, the board checks for new positions every minute while it has requests saved for faster updates. During sustained traffic it settles to about three minutes. An empty sky or a feed error uses five-minute checks. The board syncs its clock before polling so it can preserve its request budget and any active quota wait across power cycles. [adsb.lol API limits](https://www.adsb.lol/docs/open-data/api)
 
@@ -33,7 +35,7 @@ For repeated edits, run `uv run --locked preview/build.py --watch`. It rebuilds 
 
 The preview compiles and executes the **actual display lambda** from `overhead.yaml` using a small host display adapter. It shares the firmware's aircraft type from `overhead.h`. Layout coordinates, font sizes, view contents, status branches, and the range caption come from the firmware configuration.
 
-`preview/fixtures.json` supplies sample aircraft as `[flight, type, altitude_ft, speed_kt, distance_nm, bearing_deg]` and optional status text. Use `null` for unknown altitude or speed. The preview uses these synthetic fixtures and runs offline.
+`preview/fixtures.json` supplies sample aircraft as `[flight, type, altitude_ft, speed_kt, distance_nm, bearing_deg, track_deg]` and optional status text. Track is optional. Use `null` for unknown altitude, speed, or track. The preview uses these synthetic fixtures and runs offline.
 
 For an agent working on the layout, build the preview, inspect the generated PNGs, and show `preview/output/index.html` using T3's `html_preview` followed by `html_render`. Rebuild and render again after edits; an already displayed inline preview is a snapshot.
 

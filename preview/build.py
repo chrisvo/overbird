@@ -81,13 +81,15 @@ def record_commands(config, drawing, fixtures):
             raise ValueError(f"Unknown board view: {view!r}")
         source += f'board_view = overhead::View::{view.upper()};\n'
         source += f'board_status = {json.dumps(fixture.get("status", ""))};\n'
-        for flight, kind, altitude, speed, distance, bearing in fixture.get("aircraft", []):
+        for flight, kind, altitude, speed, distance, bearing, *track in fixture.get("aircraft", []):
             callsign, aircraft_type = json.dumps(flight), json.dumps(kind)
             altitude = "{}" if altitude is None else str(int(altitude))
             speed = "{}" if speed is None else str(int(speed))
+            ground_track = "{}" if not track or track[0] is None else repr(float(track[0]))
             source += (
                 f'aircraft.push_back({{{{{float(distance)!r}, {float(bearing)!r} * '
-                f'overhead::RADIANS_PER_DEGREE}}, {callsign}, {aircraft_type}, {altitude}, {speed}}});\n'
+                f'overhead::RADIANS_PER_DEGREE}}, {callsign}, {aircraft_type}, {altitude}, {speed}, '
+                f'{ground_track}, overhead::airline_for({callsign})}});\n'
             )
         source += 'std::sort(aircraft.begin(), aircraft.end());\n'
         source += '{ Display it; std::cout << "["; draw(it); std::cout << "]\\n"; }\n'

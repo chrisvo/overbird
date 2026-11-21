@@ -42,7 +42,6 @@ class PreviewTests(unittest.TestCase):
                     text = self.texts(f"{view}-{scene}")
                     self.assertIn(message, text)
                     self.assertNotIn("CLOSEST AIRCRAFT", text)
-                    self.assertIn("adsb.lol", text)
 
     def test_native_format_truncates_long_labels_and_preserves_missing_data(self):
         for view in ("radar", "spotlight", "cards"):
@@ -52,9 +51,26 @@ class PreviewTests(unittest.TestCase):
             self.assertGreaterEqual(text.count("-"), 2)
             self.assertIn("10.0 NM", text)
 
+    def test_flight_identifiers_and_recognized_airline_names_show_in_each_view(self):
+        for view in ("radar", "spotlight", "cards"):
+            with self.subTest(view=view):
+                text = self.texts(f"{view}-busy")
+                self.assertIn("SWA1482", text)
+                self.assertIn("Southwest", text)
+                self.assertIn("United", text)
+                self.assertIn("Delta", text)
+                self.assertIn("N172SP", self.texts(f"{view}-single"))
+                self.assertNotIn("Southwest", self.texts(f"{view}-single"))
+        spotlight = self.texts("spotlight-busy")
+        self.assertIn("B789", spotlight)
+        self.assertIn("A321", spotlight)
+
     def test_all_images_have_panel_dimensions_and_binary_pixels(self):
         for state in self.states.values():
             with self.subTest(state=state["id"]):
+                text = self.texts(state["id"])
+                self.assertIn("Overbird", text)
+                self.assertNotIn("adsb.lol", text)
                 with Image.open(self.output / f'{state["id"]}.png') as image:
                     self.assertEqual(image.size, (800, 480))
                     self.assertEqual(image.mode, "1")
@@ -113,6 +129,21 @@ class PreviewTests(unittest.TestCase):
             self.assertEqual(image.getpixel((239, 238)), 255)  # Engine.
             self.assertEqual(image.getpixel((241, 238)), 0)    # Gap between engine and fuselage.
             self.assertEqual(image.getpixel((239, 244)), 255)  # Tailplane.
+
+    def test_radar_uses_ground_track_instead_of_the_bearing_from_home(self):
+        with Image.open(self.output / "radar-compass.png") as image:
+            # Aircraft 2 is east of home at (309, 265) and traveling south.
+            self.assertEqual(image.getpixel((309, 277)), 255)  # South-facing nose.
+            self.assertEqual(image.getpixel((311, 277)), 0)
+            self.assertEqual(image.getpixel((311, 253)), 255)  # Tail on the north side.
+            self.assertEqual(image.getpixel((495, 322)), 0)    # Same south-facing jet in the sidebar.
+            self.assertEqual(image.getpixel((497, 322)), 255)
+            self.assertEqual(image.getpixel((497, 298)), 0)
+        with Image.open(self.output / "radar-single.png") as image:
+            self.assertEqual(image.getpixel((238, 268)), 255)  # Unknown track ring.
+            self.assertEqual(image.getpixel((238, 260)), 0)    # No north-facing nose.
+            self.assertEqual(image.getpixel((505, 116)), 255)  # Sidebar also uses a ring.
+            self.assertEqual(image.getpixel((505, 108)), 0)
 
     def test_radar_separates_crowded_markers_and_keeps_east_visible(self):
         commands = self.states["radar-crowded"]["commands"]
