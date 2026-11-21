@@ -12,9 +12,29 @@
       ["N842GA", "GLF6", 41000, 493, 9.5, 73, null]
     ]
   },
+  {
+    "id": "altitude", "label": "Low aircraft and high jets", "description": "A low aircraft ranks first while a high jet is nearly overhead.",
+    "aircraft": [
+      ["UAL934", "B789", 35000, 486, 0.4, 285, 191],
+      ["DAL281", "A321", 13000, 376, 2.1, 30, 180],
+      ["N172SP", "C172", 2200, 108, 2.1, 152, 315],
+      ["N204AB", "C182", 1600, 109, 8.0, 218, 135]
+    ]
+  },
+  {
+    "id": "aircraft-icons", "label": "Aircraft icons", "description": "A helicopter, prop planes, a jet, and contacts with incomplete type or track data.",
+    "aircraft": [
+      ["N513ME", "EC35", 1200, 115, 0.8, 0, 90],
+      ["N172SP", "C172", 2400, 108, 3.0, 270, 0],
+      ["SWA1482", "B738", 6000, 252, 3.6, 90, 180],
+      ["N407AB", "-", 900, 0, 4.2, 180, null, [], "A7"],
+      ["N418QX", "DH8D", 6000, 250, 6.2, 55, 30],
+      ["N111UX", "-", 15000, 310, 8.0, 235, 315, [], "A1"]
+    ]
+  },
   {"id": "single", "label": "One aircraft", "description": "A quiet board with one nearby flight.", "aircraft": [["N172SP", "C172", 2400, 108, 0.8, 225, 65, [[1.9, 242], [3.4, 246]]]]},
   {"id": "edge", "label": "Long / missing data", "description": "Long labels, missing values, and a flight at the range limit.", "aircraft": [["LONGCALLSIGN", "TYPE123", null, null, 0.0, 0], ["abcdef", "-", 45000, 512, 9.9, 180], ["N123456789", "B77W", 100000, 1000, 10.0, 300]]},
-  {"id": "compass", "label": "Compass points", "description": "Four flights due north, east, south, and west at increasing distances.", "aircraft": [["NORTH", "C172", 2200, 84, 2.5, 0, 0], ["EAST", "B738", 11000, 309, 5.0, 90, 180], ["SOUTH", "A321", 16400, 388, 7.5, 180, 90], ["WEST", "E75L", 14000, 276, 10.0, 270, 270]]},
+  {"id": "compass", "label": "Compass points", "description": "Four flights due north, east, south, and west at increasing distances.", "aircraft": [["NORTH", "B738", 2200, 184, 2.5, 0, 0], ["EAST", "B738", 11000, 309, 5.0, 90, 180], ["SOUTH", "A321", 16400, 388, 7.5, 180, 90], ["WEST", "E75L", 14000, 276, 10.0, 270, 270]]},
   {"id": "crowded", "label": "Crowded radar", "description": "Two aircraft on the same approach, one to the west, and one at the east range limit.", "aircraft": [["WESTNEAR", "B738", 4000, 220, 2.0, 270, 0], ["EASTNEAR", "C172", 2400, 108, 2.05, 90, 0], ["FOLLOW", "A321", 7000, 246, 3.44, 90, 0], ["ATLIMIT", "E75L", 9000, 260, 10, 90, 0]]},
   {"id": "east-traffic", "label": "East traffic", "description": "Four aircraft on different bearings in the east sector.", "aircraft": [["NEAR", "B738", 4000, 220, 5.8, 92, 18], ["NORTHEAST", "C172", 2400, 108, 7.6, 67, 54], ["SOUTHEAST", "A321", 7000, 246, 8.4, 113, 81], ["EAST", "E75L", 9000, 260, 8.5, 87, 112]]},
   {"id": "coincident", "label": "Shared position", "description": "Four aircraft report the same radar position at different altitudes.", "aircraft": [["A1", "B738", 4000, 220, 9.9, 0, 180], ["A2", "C172", 2400, 108, 9.9, 0, 180], ["A3", "A321", 7000, 246, 9.9, 0, 180], ["A4", "E75L", 9000, 260, 9.9, 0, 180]]},

@@ -6,7 +6,11 @@ An ESPHome flight board for the Seeed reTerminal E1001. The firmware configurati
 
 The two white buttons cycle backward and forward through **Radar**, **Spotlight**, and **Flight Cards**. The green button returns to Radar. All three views use the latest flight snapshot.
 
-Radar puts your configured location at the center, with true north at the top. The inner ring is half the selected range. The four closest aircraft are numbered and their jets point along the reported ground track. A ring indicates a numbered aircraft with unknown track. When icons would overlap, a line connects a shifted icon to its position. Other aircraft appear as dots. Dotted trails connect up to two previous reported positions for the numbered aircraft. [ADS-B field reference](https://github.com/wiedehopf/readsb/blob/dev/README-json.md)
+The board ranks aircraft by estimated straight-line distance, using ground distance and reported altitude as height above the observer. It uses geometric altitude when barometric altitude is unavailable. When altitude is missing or below zero, the board ranks the aircraft by ground distance alone. The map and displayed distances use ground distance.
+
+Radar puts your configured location at the center, with true north at the top. The inner ring is half the selected range. The four closest aircraft are numbered and their map icons point along the reported ground track. A ring on the map indicates a numbered aircraft with unknown track. When icons would overlap, a line connects a shifted icon to its position. Other aircraft appear as dots. Dotted trails connect up to two previous reported positions for the numbered aircraft.
+
+The board uses a swept-wing icon for jets, a straight-wing icon for non-jet airplanes, and a rotor icon for helicopters and other rotorcraft. It uses a small arrow when the aircraft class is unknown. The receiver can supply a model designator or report the rotorcraft emitter category directly. [FAA aircraft designators](https://www.faa.gov/documentLibrary/media/Order/FAA_Order_JO_7360.1K_Aircraft_Type_Designators.pdf) · [readsb feed fields](https://github.com/wiedehopf/readsb/blob/dev/README-json.md)
 
 The views show an airline name beside the callsign when the board recognizes its three-letter designator. Aircraft with unrecognized callsigns or only a registration still show their identifier. [ICAO airline designators](https://www.icao.int/operational-safety/Designators-and-indicators)
 
@@ -39,7 +43,7 @@ For repeated edits, run `uv run --locked preview/build.py --watch`. It rebuilds 
 
 The preview compiles and executes the **actual display lambda** from `overhead.yaml` using a small host display adapter. It shares the firmware's aircraft type from `overhead.h`. Layout coordinates, font sizes, view contents, status branches, and the range caption come from the firmware configuration.
 
-`preview/fixtures.json` supplies sample aircraft as `[flight, type, altitude_ft, speed_kt, distance_nm, bearing_deg, track_deg, history]`. Track and history are optional. History contains distance and bearing pairs, most recent first. A scene can set status text and `updated_at` to show a retained snapshot. Use `null` for unknown altitude, speed, or track. The preview uses synthetic fixtures and runs offline.
+`preview/fixtures.json` supplies sample aircraft as `[flight, type, altitude_ft, speed_kt, distance_nm, bearing_deg, track_deg, history, emitter_category]`. Track, history, and emitter category are optional. History contains distance and bearing pairs, most recent first. A scene can set status text and `updated_at` to show a retained snapshot. Use `null` for unknown altitude, speed, or track. The preview uses synthetic fixtures and runs offline.
 
 For an agent working on the layout, build the preview, inspect the generated PNGs, and show `preview/output/index.html` using T3's `html_preview` followed by `html_render`. Rebuild and render again after edits; an already displayed inline preview is a snapshot.
 

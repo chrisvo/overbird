@@ -85,22 +85,24 @@ def record_commands(config, drawing, fixtures):
         if updated_at is not None:
             source += f'flight_snapshot.emplace();\nflight_snapshot->updated_at = {json.dumps(updated_at)};\n'
         for row in fixture.get("aircraft", []) if updated_at is not None else []:
-            flight, kind, altitude, speed, distance, bearing, *movement = row
+            flight, kind, altitude, speed, distance, bearing, *details = row
             callsign, aircraft_type = json.dumps(flight), json.dumps(kind)
             altitude = "{}" if altitude is None else str(int(altitude))
             speed = "{}" if speed is None else str(int(speed))
-            track = "{}" if not movement or movement[0] is None else repr(float(movement[0]))
+            track = "{}" if not details or details[0] is None else repr(float(details[0]))
             source += (
                 f'flight_snapshot->flights.push_back({{{{{float(distance)!r}, {float(bearing)!r} * '
                 f'overhead::RADIANS_PER_DEGREE}}, {callsign}, {aircraft_type}, {altitude}, {speed}, '
                 f'{track}, overhead::airline_for({callsign})}});\n'
             )
-            history = movement[1] if len(movement) > 1 else []
+            history = details[1] if len(details) > 1 else []
             for index, (past_distance, past_bearing) in enumerate(history):
                 source += (
                     f'flight_snapshot->flights.back().history.at({index}) = overhead::Position{{'
                     f'{float(past_distance)!r}, {float(past_bearing)!r} * overhead::RADIANS_PER_DEGREE}};\n'
                 )
+            if len(details) > 2 and details[2] is not None:
+                source += f'flight_snapshot->flights.back().apply_emitter_category({json.dumps(details[2])});\n'
         source += 'if (flight_snapshot) std::sort(flight_snapshot->flights.begin(), flight_snapshot->flights.end());\n'
         source += '{ Display it; std::cout << "["; draw(it); std::cout << "]\\n"; }\n'
     source += '}\n'
@@ -271,7 +273,7 @@ def main():
             raise SystemExit(1)
     if not args.watch:
         return
-    watched = [args.config, args.fixtures, ROOT / "overhead.h", HERE / "display_shim.h",
+    watched = [args.config, args.fixtures, ROOT / "overhead.h", ROOT / "aircraft_types.h", HERE / "display_shim.h",
                HERE / "template.html", *sorted((HERE / "fonts").glob("*.ttf"))]
     previous = [path.stat().st_mtime_ns for path in watched]
     print("Watching layout, fixtures, and fonts. Refresh the HTML after each rebuild. Ctrl-C stops.", flush=True)

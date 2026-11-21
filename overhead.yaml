@@ -3,6 +3,7 @@ esphome:
   friendly_name: Overbird
   min_version: 2026.11.0
   includes:
+    - aircraft_types.h
     - <overhead.h>  # Declare the board types before ESPHome generates the globals.
     - overhead.h    # Copy the local header into the build.
   on_boot:
@@ -202,9 +203,10 @@ script:
                           if (!(position_age >= 0 && position_age + std::max(0.0, snapshot_age) <= 30)) continue;
 
                           // dump1090-mutability uses altitude/speed. Newer dump1090 and readsb use alt_baro/gs.
-                          const auto altitude = plane["alt_baro"].isNull() ? plane["altitude"] : plane["alt_baro"];
+                          const auto barometric = plane["alt_baro"].isNull() ? plane["altitude"] : plane["alt_baro"];
                           const auto speed = plane["gs"].isNull() ? plane["speed"] : plane["gs"];
-                          if (std::string_view(altitude | "") == "ground") continue;
+                          if (std::string_view(barometric | "") == "ground") continue;
+                          const auto altitude = barometric.is<int>() ? barometric : plane["alt_geom"];
 
                           const auto latitude = plane["lat"].as<double>();
                           const auto longitude = plane["lon"].as<double>();
@@ -226,6 +228,7 @@ script:
 
                           overhead::Aircraft flight{position, label, plane["t"] | "-", {}, {}, {}, airline,
                                                     plane["hex"] | ""};
+                          flight.apply_emitter_category(plane["category"] | "");
                           if (altitude.is<int>()) flight.altitude_ft = altitude.as<int>();
                           if (speed.is<double>()) flight.speed_kt = std::lround(speed.as<double>());
                           if (plane["track"].is<double>()) {
@@ -346,20 +349,62 @@ display:
                     static_cast<unsigned>(flights.size() - shown));
         }
       };
-      constexpr int jet_half_widths[] = {
-        0, 1, 2, 2, 2, 2, 2, 2, 3, 5, 7, 9, 11, 11, 9, 7, 2, 2, 2, 2, 2, 4, 6, 6, 2
-      };
-      const auto draw_jet = [&](int x, int y, int scale, Color color) {
-        const auto stroke = [&](int left, int top, int width, int height) {
-          it.filled_rectangle(x + left * scale, y + top * scale, width * scale, height * scale, color);
+      using overhead::AircraftKind;
+      const auto aircraft_pixel = [](AircraftKind kind, int x, int y) {
+        if (y < -12 || y > 12) return false;
+        constexpr int jet_half_widths[] = {
+          0, 1, 2, 2, 2, 2, 2, 2, 3, 5, 7, 9, 11, 11, 9, 7, 2, 2, 2, 2, 2, 4, 6, 6, 2
         };
-        for (int row = 0; row < 25; ++row) {
-          const int half_width = jet_half_widths[row];
-          stroke(-half_width, row - 12, 2 * half_width + 1, 1);
+        constexpr int non_jet_half_widths[] = {
+          -1, -1, 1, 2, 2, 2, 2, 2, 3, 8, 10, 10, 10, 9, 2, 2, 2, 2, 2, 3, 5, 5, 4, 1, -1
+        };
+        constexpr int rotorcraft_half_widths[] = {
+          -1, -1, 1, 3, 4, 4, 4, 4, 4, 4, 4, 3, 3, 2, 1, 1, 1, 1, 1, 1, 1, 2, 3, 2, -1
+        };
+        const int width = std::abs(x);
+        switch (kind) {
+          case AircraftKind::JET:
+            return width <= jet_half_widths[y + 12] || (y >= 2 && y <= 6 && width >= 5 && width <= 7);
+          case AircraftKind::NON_JET:
+            return width <= non_jet_half_widths[y + 12];
+          case AircraftKind::ROTORCRAFT:
+            // Keep the blade tips inside the radar marker as the icon rotates.
+            return width <= rotorcraft_half_widths[y + 12] ||
+                   (width <= 7 && std::abs(y + 1) <= 7 && std::abs(width - std::abs(y + 1)) <= 1);
+          case AircraftKind::UNKNOWN:
+            return (y >= -8 && y <= 0 && width <= (y + 8) / 2) || (y > 0 && y <= 5 && width <= 1);
         }
-        // Wing-mounted engines leave a gap on each side of the fuselage.
-        stroke(-7, 2, 3, 5);
-        stroke(5, 2, 3, 5);
+        return false;
+      };
+      const auto draw_aircraft = [&](int x, int y, AircraftKind kind, int scale, Color foreground,
+                                     double track = 0, std::optional<Color> background = {}) {
+        // Sample the north-facing silhouette in reverse to avoid holes when rotating.
+        constexpr int half_width = 11, half_height = 12;
+        constexpr int columns = 2 * half_width + 1;
+        const double angle = track * overhead::RADIANS_PER_DEGREE;
+        const double cosine = std::cos(angle), sine = std::sin(angle);
+        bool pixels[2 * half_height + 1][columns] = {};
+        for (int row = -half_height; row <= half_height; ++row) {
+          for (int column = -half_width; column <= half_width; ++column) {
+            const int sx = std::lround(column * cosine + row * sine);
+            const int sy = std::lround(row * cosine - column * sine);
+            pixels[row + half_height][column + half_width] = aircraft_pixel(kind, sx, sy);
+          }
+        }
+        for (int halo = background.has_value(); halo >= 0; --halo) {
+          const auto color = halo ? *background : foreground;
+          for (int row = -half_height; row <= half_height; ++row) {
+            int start = 0;
+            for (int column = 0; column <= columns; ++column) {
+              if (column < columns && pixels[row + half_height][column]) continue;
+              if (column > start) {
+                it.filled_rectangle(x + (start - half_width) * scale - halo, y + row * scale - halo,
+                                    (column - start) * scale + 2 * halo, scale + 2 * halo, color);
+              }
+              start = column + 1;
+            }
+          }
+        }
       };
       const auto show_airline = [&](int x, int y, Color color, const overhead::Aircraft &flight) {
         if (!flight.airline.empty()) {
@@ -398,45 +443,15 @@ display:
           return;
         }
 
-        const auto show_ground_track = [&](int x, int y, std::optional<double> track,
-                                           Color foreground, Color background) {
-          if (!track) {
+        const auto numbered_marker = [&](int x, int y, unsigned number, AircraftKind kind,
+                                         std::optional<double> track, Color foreground, Color background,
+                                         int label_offset = 18) {
+          if (track) {
+            draw_aircraft(x, y, kind, 1, foreground, *track, background);
+          } else {
             it.filled_circle(x, y, 7, background);
             it.circle(x, y, 4, foreground);
-            return;
           }
-
-          // Sample the north-facing silhouette in reverse to avoid holes when rotating.
-          // Keep its outline inside the same bounds used to place the numbered markers.
-          const double angle = *track * overhead::RADIANS_PER_DEGREE;
-          const double cosine = std::cos(angle), sine = std::sin(angle);
-          bool pixels[25][23] = {};
-          for (int row = -12; row <= 12; ++row) {
-            for (int column = -11; column <= 11; ++column) {
-              const int sx = std::lround(column * cosine + row * sine);
-              const int sy = std::lround(row * cosine - column * sine);
-              const bool body = sy >= -12 && sy <= 12 && std::abs(sx) <= jet_half_widths[sy + 12];
-              const bool engine = sy >= 2 && sy <= 6 && std::abs(sx) >= 5 && std::abs(sx) <= 7;
-              pixels[row + 12][column + 11] = body || engine;
-            }
-          }
-          for (int halo : {1, 0}) {
-            for (int row = 0; row < 25; ++row) {
-              int start = 0;
-              for (int column = 0; column <= 23; ++column) {
-                if (column < 23 && pixels[row][column]) continue;
-                if (column > start) {
-                  it.filled_rectangle(x + start - 11 - halo, y + row - 12 - halo,
-                                      column - start + 2 * halo, 1 + 2 * halo, halo ? background : foreground);
-                }
-                start = column + 1;
-              }
-            }
-          }
-        };
-        const auto numbered_marker = [&](int x, int y, unsigned number, std::optional<double> track,
-                                         Color foreground, Color background, int label_offset = 18) {
-          show_ground_track(x, y, track, foreground, background);
           it.filled_rectangle(x + label_offset - 6, y - 8, 13, 17, background);
           it.printf(x + label_offset, y, id(label_font), foreground, TextAlign::CENTER, "%u", number);
         };
@@ -576,13 +591,14 @@ display:
         for (size_t i = 0; i < keyed; ++i) {
           const auto [x, y] = markers[i] ? markers[i]->icon : margin_markers[i];
           const int label_offset = markers[i] ? markers[i]->label_offset : 18;
-          numbered_marker(x, y, static_cast<unsigned>(i + 1), flights[i].ground_track, paper, ink, label_offset);
+          const auto &flight = flights[i];
+          numbered_marker(x, y, static_cast<unsigned>(i + 1), flight.kind, flight.ground_track, paper, ink, label_offset);
         }
 
         const auto &closest = flights.front();
         it.rectangle(484, 104, 288, 162, ink);
         it.filled_rectangle(484, 104, 288, 33, ink);
-        numbered_marker(505, 120, 1, closest.ground_track, paper, ink);
+        numbered_marker(505, 120, 1, closest.kind, 0, paper, ink);
         it.print(534, 110, id(label_font), paper, "CLOSEST AIRCRAFT");
         it.printf(758, 110, id(label_font), paper, TextAlign::TOP_RIGHT,
                   "%.1f NM", closest.position.distance_nm);
@@ -604,7 +620,7 @@ display:
             const int y = 299 + 39 * (i - 1);
             const auto &flight = flights[i];
             it.horizontal_line(484, y - 3, 288, ink);
-            numbered_marker(495, y + 11, static_cast<unsigned>(i + 1), flight.ground_track, ink, paper);
+            numbered_marker(495, y + 11, static_cast<unsigned>(i + 1), flight.kind, 0, ink, paper);
             it.printf(524, y, id(value_font), ink, "%.10s", flight.callsign.c_str());
             show_airline(524, y + 18, ink, flight);
             it.printf(772, y + 3, id(label_font), ink, TextAlign::TOP_RIGHT,
@@ -624,7 +640,7 @@ display:
         show_airline(52, 199, paper, closest);
         it.printf(48, 207, id(distance_font), paper, "%.1f", closest.position.distance_nm);
         it.print(52, 289, id(label_font), paper, "NAUTICAL MILES AWAY");
-        draw_jet(414, 251, 3, paper);
+        draw_aircraft(414, 251, closest.kind, 3, paper);
         it.horizontal_line(51, 326, 410, paper);
         it.print(51, 342, id(label_font), paper, "ALTITUDE FT");
         it.print(255, 342, id(label_font), paper, "GROUND SPEED KT");
@@ -651,6 +667,7 @@ display:
             show_airline(514, y + 44, ink, flight);
             it.printf(514, y + (flight.airline.empty() ? 44 : 62), id(label_font), ink,
                       "%.6s", flight.type.c_str());
+            draw_aircraft(692, y + 54, flight.kind, 1, ink);
             it.printf(772, y + 44, id(label_font), ink, TextAlign::TOP_RIGHT,
                       "%.1f NM", flight.position.distance_nm);
           }
@@ -668,6 +685,7 @@ display:
         it.rectangle(x, y, 240, 147, ink);
         it.filled_rectangle(x, y, 240, 35, ink);
         it.printf(x + 14, y + 7, id(label_font), paper, "%.6s", flight.type.c_str());
+        draw_aircraft(x + 120, y + 17, flight.kind, 1, paper);
         it.printf(x + 226, y + 7, id(label_font), paper, TextAlign::TOP_RIGHT,
                   "%.1f NM", flight.position.distance_nm);
         const auto font = flight.callsign.size() > 8 ? id(value_font) : id(callsign_font);
