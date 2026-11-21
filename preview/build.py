@@ -68,30 +68,40 @@ def record_commands(config, drawing, fixtures):
         '#include "overhead.h"',
         '#define id(name) name',
         *declarations,
-        'std::vector<overhead::Aircraft> aircraft;',
+        'std::optional<overhead::FlightSnapshot> flight_snapshot;',
         'overhead::View board_view;',
         'std::string board_status;',
         'void draw(Display &it) {', drawing, '}',
         'int main() {',
     ])
     for fixture in fixtures:
-        source += '\naircraft.clear();\n'
         view = fixture.get("view", "radar")
         if view not in VIEWS:
             raise ValueError(f"Unknown board view: {view!r}")
         source += f'board_view = overhead::View::{view.upper()};\n'
-        source += f'board_status = {json.dumps(fixture.get("status", ""))};\n'
-        for flight, kind, altitude, speed, distance, bearing, *track in fixture.get("aircraft", []):
+        status = fixture.get("status", "")
+        source += f'board_status = {json.dumps(status)};\nflight_snapshot.reset();\n'
+        updated_at = fixture.get("updated_at", None if status else "14:32:10 UTC")
+        if updated_at is not None:
+            source += f'flight_snapshot.emplace();\nflight_snapshot->updated_at = {json.dumps(updated_at)};\n'
+        for row in fixture.get("aircraft", []) if updated_at is not None else []:
+            flight, kind, altitude, speed, distance, bearing, *movement = row
             callsign, aircraft_type = json.dumps(flight), json.dumps(kind)
             altitude = "{}" if altitude is None else str(int(altitude))
             speed = "{}" if speed is None else str(int(speed))
-            ground_track = "{}" if not track or track[0] is None else repr(float(track[0]))
+            track = "{}" if not movement or movement[0] is None else repr(float(movement[0]))
             source += (
-                f'aircraft.push_back({{{{{float(distance)!r}, {float(bearing)!r} * '
+                f'flight_snapshot->flights.push_back({{{{{float(distance)!r}, {float(bearing)!r} * '
                 f'overhead::RADIANS_PER_DEGREE}}, {callsign}, {aircraft_type}, {altitude}, {speed}, '
-                f'{ground_track}, overhead::airline_for({callsign})}});\n'
+                f'{track}, overhead::airline_for({callsign})}});\n'
             )
-        source += 'std::sort(aircraft.begin(), aircraft.end());\n'
+            history = movement[1] if len(movement) > 1 else []
+            for index, (past_distance, past_bearing) in enumerate(history):
+                source += (
+                    f'flight_snapshot->flights.back().history.at({index}) = overhead::Position{{'
+                    f'{float(past_distance)!r}, {float(past_bearing)!r} * overhead::RADIANS_PER_DEGREE}};\n'
+                )
+        source += 'if (flight_snapshot) std::sort(flight_snapshot->flights.begin(), flight_snapshot->flights.end());\n'
         source += '{ Display it; std::cout << "["; draw(it); std::cout << "]\\n"; }\n'
     source += '}\n'
     with tempfile.TemporaryDirectory(prefix="overbird-preview-") as temp:

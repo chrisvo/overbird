@@ -6,11 +6,15 @@ An ESPHome flight board for the Seeed reTerminal E1001. The firmware configurati
 
 The two white buttons cycle backward and forward through **Radar**, **Spotlight**, and **Flight Cards**. The green button returns to Radar. All three views use the latest flight snapshot.
 
-Radar puts your configured location at the center, with true north at the top. The inner ring is half the selected range. The four closest aircraft are numbered and their jets point along the reported ground track. A ring indicates a numbered aircraft with unknown track. When icons would overlap, a line connects a shifted icon to its position. Other aircraft appear as dots. [ADS-B field reference](https://github.com/wiedehopf/readsb/blob/dev/README-json.md)
+Radar puts your configured location at the center, with true north at the top. The inner ring is half the selected range. The four closest aircraft are numbered and their jets point along the reported ground track. A ring indicates a numbered aircraft with unknown track. When icons would overlap, a line connects a shifted icon to its position. Other aircraft appear as dots. Dotted trails connect up to two previous reported positions for the numbered aircraft. [ADS-B field reference](https://github.com/wiedehopf/readsb/blob/dev/README-json.md)
 
 The views show an airline name beside the callsign when the board recognizes its three-letter designator. Aircraft with unrecognized callsigns or only a registration still show their identifier. [ICAO airline designators](https://www.icao.int/operational-safety/Designators-and-indicators)
 
-With aircraft in range, the board checks for new positions every minute while it has requests saved for faster updates. During sustained traffic it settles to about three minutes. An empty sky or a feed error uses five-minute checks. The board syncs its clock before polling so it can preserve its request budget and any active quota wait across power cycles. [adsb.lol API limits](https://www.adsb.lol/docs/open-data/api)
+The footer shows the time of the last successful update in UTC, including seconds. If the feed stops updating or Wi-Fi goes offline, the board labels the last snapshot stale and retains it for up to five minutes after that update.
+
+Set `receiver_url` in `secrets.yaml` to the LAN address of your dump1090 or readsb `aircraft.json` endpoint. The board requests a snapshot every 10 seconds, even when the sky is empty, and filters aircraft to the configured radius on the device. It backs off when the receiver returns an error. [dump1090 JSON format](https://github.com/flightaware/dump1090/blob/master/README-json.md)
+
+The board syncs its clock before polling so it can detect expired receiver snapshots. For a LAN without internet access, set the `time_servers` list in `overhead.yaml` to reachable LAN NTP servers. The receiver needs an accurate clock too. [ESPHome SNTP configuration](https://esphome.io/components/time/sntp/)
 
 ## Virtual display
 
@@ -35,7 +39,7 @@ For repeated edits, run `uv run --locked preview/build.py --watch`. It rebuilds 
 
 The preview compiles and executes the **actual display lambda** from `overhead.yaml` using a small host display adapter. It shares the firmware's aircraft type from `overhead.h`. Layout coordinates, font sizes, view contents, status branches, and the range caption come from the firmware configuration.
 
-`preview/fixtures.json` supplies sample aircraft as `[flight, type, altitude_ft, speed_kt, distance_nm, bearing_deg, track_deg]` and optional status text. Track is optional. Use `null` for unknown altitude, speed, or track. The preview uses these synthetic fixtures and runs offline.
+`preview/fixtures.json` supplies sample aircraft as `[flight, type, altitude_ft, speed_kt, distance_nm, bearing_deg, track_deg, history]`. Track and history are optional. History contains distance and bearing pairs, most recent first. A scene can set status text and `updated_at` to show a retained snapshot. Use `null` for unknown altitude, speed, or track. The preview uses synthetic fixtures and runs offline.
 
 For an agent working on the layout, build the preview, inspect the generated PNGs, and show `preview/output/index.html` using T3's `html_preview` followed by `html_render`. Rebuild and render again after edits; an already displayed inline preview is a snapshot.
 

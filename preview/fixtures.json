@@ -2,9 +2,9 @@
   {
     "id": "busy", "label": "Busy sky", "description": "Eight flights distributed across the 10 NM range.",
     "aircraft": [
-      ["SWA1482", "B738", 12400, 312, 1.2, 47, 295],
-      ["UAL934", "B789", 35000, 486, 2.8, 285, 82],
-      ["N172SP", "C172", 2400, 108, 3.4, 152, 206],
+      ["SWA1482", "B738", 12400, 312, 1.2, 47, 70, [[4.1, 256], [9.3, 253]]],
+      ["UAL934", "B789", 35000, 486, 2.8, 285, 191, [[8.8, 352]]],
+      ["N172SP", "C172", 2400, 108, 3.4, 152, 315, [[5.1, 146], [6.9, 143]]],
       ["DAL281", "A321", 18200, 376, 4.7, 30, 180],
       ["ASA617", "B739", 28400, 441, 6.1, 110, 270],
       ["FDX502", "B763", 31000, 462, 7.6, 218, 135],
@@ -12,7 +12,7 @@
       ["N842GA", "GLF6", 41000, 493, 9.5, 73, null]
     ]
   },
-  {"id": "single", "label": "One aircraft", "description": "A quiet board with one nearby flight.", "aircraft": [["N172SP", "C172", 2400, 108, 0.8, 225]]},
+  {"id": "single", "label": "One aircraft", "description": "A quiet board with one nearby flight.", "aircraft": [["N172SP", "C172", 2400, 108, 0.8, 225, 65, [[1.9, 242], [3.4, 246]]]]},
   {"id": "edge", "label": "Long / missing data", "description": "Long labels, missing values, and a flight at the range limit.", "aircraft": [["LONGCALLSIGN", "TYPE123", null, null, 0.0, 0], ["abcdef", "-", 45000, 512, 9.9, 180], ["N123456789", "B77W", 100000, 1000, 10.0, 300]]},
   {"id": "compass", "label": "Compass points", "description": "Four flights due north, east, south, and west at increasing distances.", "aircraft": [["NORTH", "C172", 2200, 84, 2.5, 0, 0], ["EAST", "B738", 11000, 309, 5.0, 90, 180], ["SOUTH", "A321", 16400, 388, 7.5, 180, 90], ["WEST", "E75L", 14000, 276, 10.0, 270, 270]]},
   {"id": "crowded", "label": "Crowded radar", "description": "Two aircraft on the same approach, one to the west, and one at the east range limit.", "aircraft": [["WESTNEAR", "B738", 4000, 220, 2.0, 270, 0], ["EASTNEAR", "C172", 2400, 108, 2.05, 90, 0], ["FOLLOW", "A321", 7000, 246, 3.44, 90, 0], ["ATLIMIT", "E75L", 9000, 260, 10, 90, 0]]},
@@ -22,6 +22,14 @@
   {"id": "wifi", "label": "Waiting for Wi-Fi", "description": "Startup or disconnected Wi-Fi.", "status": "Waiting for Wi-Fi"},
   {"id": "clock", "label": "Waiting for clock", "description": "Wi-Fi is connected and the board is preparing its first flight request.", "status": "Waiting for flight data"},
   {"id": "unavailable", "label": "Feed unavailable", "description": "The flight request fails.", "status": "Flight feed unavailable"},
+  {"id": "receiver-stale", "label": "Receiver file expired", "description": "The receiver serves an old file and the board has no recent snapshot to show.", "status": "Flight feed stale"},
+  {"id": "stale", "label": "Stale radar", "description": "An expired receiver file leaves the last successful snapshot visible for a short time.", "status": "Flight feed stale", "updated_at": "14:32:10 UTC", "aircraft": [
+    ["SWA1482", "B738", 12400, 312, 1.2, 47, 70, [[4.1, 256], [9.3, 253]]],
+    ["UAL934", "B789", 35000, 486, 2.8, 285, 191, [[8.8, 352]]]
+  ]},
   {"id": "quota", "label": "Feed quota reached", "description": "The feed returns a rate-limit response.", "status": "Feed quota reached"},
-  {"id": "invalid", "label": "Invalid flight data", "description": "The feed response cannot be parsed.", "status": "Invalid flight data"}
+  {"id": "invalid", "label": "Invalid flight data", "description": "The feed response cannot be parsed.", "status": "Invalid flight data"},
+  {"id": "invalid-retained", "label": "Invalid data, retained radar", "description": "The board keeps its last good snapshot while the feed returns invalid data.", "status": "Invalid flight data", "updated_at": "14:32:10 UTC", "aircraft": [
+    ["SWA1482", "B738", 12400, 312, 1.2, 47, 70]
+  ]}
 ]

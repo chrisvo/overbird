@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -22,25 +23,22 @@ constexpr View step_view(View view, int direction) {
 class PollSchedule {
  public:
   bool ready(uint64_t now) const {
-    return now >= next_poll_at_ && !waiting_for_quota(now) && available_credit(now) >= REQUEST_CREDIT_MS;
+    return now >= next_poll_at_ && !waiting_for_quota(now);
   }
 
   bool record_attempt(uint64_t now) {
     if (!ready(now)) return false;
-    credit_ms_ = available_credit(now) - REQUEST_CREDIT_MS;
-    credit_at_ = now;
-    next_poll_at_ = now + ACTIVE_INTERVAL_MS;
+    next_poll_at_ = now + POLL_INTERVAL_MS;
     return true;
   }
 
-  void finish(uint64_t now, bool has_flights) {
-    next_poll_at_ = std::max(next_poll_at_, now + (has_flights ? ACTIVE_INTERVAL_MS : IDLE_INTERVAL_MS));
+  void back_off(uint64_t now, bool client_error = false) {
+    next_poll_at_ = std::max(next_poll_at_, now + (client_error ? 300'000 : 30'000));
   }
 
   void rate_limited(uint64_t now, std::string_view retry_after) {
-    constexpr uint64_t DAY_MS = 86'400'000;
     uint32_t seconds = 0;
-    uint64_t wait_ms = DAY_MS;
+    uint64_t wait_ms = 60'000;
     if (!retry_after.empty()) {
       const char *end = retry_after.data() + retry_after.size();
       const auto result = std::from_chars(retry_after.data(), end, seconds);
@@ -54,19 +52,7 @@ class PollSchedule {
   bool waiting_for_quota(uint64_t now) const { return now < retry_at_; }
 
  private:
-  static constexpr uint64_t ACTIVE_INTERVAL_MS = 60'000;
-  static constexpr uint64_t IDLE_INTERVAL_MS = 300'000;
-  // One request refills every three minutes, with up to 12 saved for a burst.
-  // That bounds one board to 492 requests in any 24 hours.
-  static constexpr uint64_t REQUEST_CREDIT_MS = 180'000;
-  static constexpr uint64_t MAX_CREDIT_MS = 12 * REQUEST_CREDIT_MS;
-
-  uint64_t available_credit(uint64_t now) const {
-    return std::min(MAX_CREDIT_MS, credit_ms_ + (now - std::min(now, credit_at_)));
-  }
-
-  uint64_t credit_ms_ = MAX_CREDIT_MS;
-  uint64_t credit_at_ = 0;
+  static constexpr uint64_t POLL_INTERVAL_MS = 10'000;
   uint64_t next_poll_at_ = 0;
   uint64_t retry_at_ = 0;
 };
@@ -121,10 +107,39 @@ struct Aircraft {
   std::optional<long> speed_kt;
   std::optional<double> ground_track;
   std::string_view airline;
+  std::string feed_id{};
+  std::array<std::optional<Position>, 2> history{};
+  uint32_t history_at_ms = 0;
 
   bool operator<(const Aircraft &other) const {
     return std::tie(position.distance_nm, callsign, type) <
            std::tie(other.position.distance_nm, other.callsign, other.type);
+  }
+};
+
+struct FlightSnapshot {
+  std::vector<Aircraft> flights;
+  std::string updated_at;
+  uint32_t received_at_ms = 0;
+
+  bool expired(uint32_t now_ms) const { return now_ms - received_at_ms >= 300'000; }
+
+  void carry_history(const FlightSnapshot &previous) {
+    if (previous.expired(received_at_ms)) return;
+    for (auto &flight : flights) {
+      if (flight.feed_id.empty()) continue;
+      const auto same_aircraft = [&](const Aircraft &older) { return older.feed_id == flight.feed_id; };
+      const auto older = std::find_if(previous.flights.begin(), previous.flights.end(), same_aircraft);
+      if (older == previous.flights.end()) continue;
+      // Keep trail points far enough apart to read while updating the marker every ten seconds.
+      if (!older->history.front() || previous.received_at_ms - older->history_at_ms >= 30'000) {
+        flight.history = {older->position, older->history.front()};
+        flight.history_at_ms = previous.received_at_ms;
+      } else {
+        flight.history = older->history;
+        flight.history_at_ms = older->history_at_ms;
+      }
+    }
   }
 };
 
