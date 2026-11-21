@@ -61,6 +61,9 @@ class PreviewTests(unittest.TestCase):
                 self.assertIn("Delta", text)
                 self.assertIn("N172SP", self.texts(f"{view}-single"))
                 self.assertNotIn("Southwest", self.texts(f"{view}-single"))
+        spotlight = self.texts("spotlight-busy")
+        self.assertIn("B789", spotlight)
+        self.assertIn("A321", spotlight)
 
     def test_all_images_have_panel_dimensions_and_binary_pixels(self):
         for state in self.states.values():
@@ -133,9 +136,14 @@ class PreviewTests(unittest.TestCase):
             self.assertEqual(image.getpixel((309, 277)), 255)  # South-facing nose.
             self.assertEqual(image.getpixel((311, 277)), 0)
             self.assertEqual(image.getpixel((311, 253)), 255)  # Tail on the north side.
+            self.assertEqual(image.getpixel((495, 322)), 0)    # Same south-facing jet in the sidebar.
+            self.assertEqual(image.getpixel((497, 322)), 255)
+            self.assertEqual(image.getpixel((497, 298)), 0)
         with Image.open(self.output / "radar-single.png") as image:
             self.assertEqual(image.getpixel((238, 268)), 255)  # Unknown track ring.
             self.assertEqual(image.getpixel((238, 260)), 0)    # No north-facing nose.
+            self.assertEqual(image.getpixel((505, 116)), 255)  # Sidebar also uses a ring.
+            self.assertEqual(image.getpixel((505, 108)), 0)
 
     def test_radar_separates_crowded_markers_and_keeps_east_visible(self):
         commands = self.states["radar-crowded"]["commands"]
