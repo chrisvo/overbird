@@ -9,7 +9,11 @@
     body { margin: 0; }
     * { box-sizing: border-box; }
     .toolbar, .footnote { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
-    .toolbar { margin-bottom: 18px; }
+    .toolbar { gap: 8px; margin-bottom: 18px; }
+    .view-controls { display: flex; align-items: center; gap: 5px; }
+    #radar { color: #fff; background: #21734e; }
+    #scene { max-width: 140px; }
+    #view-name { min-width: 74px; font-size: 13px; text-align: center; }
     label { font-size: 13px; display: flex; align-items: center; gap: 8px; }
     select, button, .download { font: inherit; font-size: 13px; color: inherit; background: var(--secondary, light-dark(#eee, #282828)); border: 1px solid var(--border, #7777); border-radius: 6px; padding: 8px 10px; }
     select:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--ring, #3987e8); outline-offset: 3px; }
@@ -35,6 +39,12 @@
   <main>
     <div class="toolbar" aria-label="Preview controls">
       <label>Scene <select id="scene"></select></label>
+      <div class="view-controls" role="group" aria-label="Device buttons">
+        <button id="previous" type="button" aria-label="Previous view">&larr;</button>
+        <span id="view-name" aria-live="polite"></span>
+        <button id="next" type="button" aria-label="Next view">&rarr;</button>
+        <button id="radar" type="button" aria-label="Return to Radar">Radar</button>
+      </div>
       <button id="zoom" type="button" aria-pressed="false">View at 1:1</button>
       <button id="frame" type="button" aria-pressed="true">Device frame</button>
       <a id="download" class="download" download="overhead.png">Save PNG</a>
@@ -51,11 +61,18 @@
     const scene = document.querySelector('#scene');
     const display = document.querySelector('#display');
     const device = document.querySelector('#device');
-    for (const state of preview.states) scene.add(new Option(state.label, state.id));
+    const views = Object.keys(preview.views);
+    let viewIndex = 0;
+    for (const state of preview.states.filter(state => state.view === views[0])) {
+      scene.add(new Option(state.label, state.scene));
+    }
     function renderScene() {
-      const state = preview.states.find(state => state.id === scene.value);
+      const view = views[viewIndex];
+      const viewName = preview.views[view];
+      const state = preview.states.find(state => state.scene === scene.value && state.view === view);
       display.src = state.image;
-      display.alt = `Overhead flight board: ${state.label}`;
+      display.alt = `Overhead ${viewName} · ${state.label}`;
+      document.querySelector('#view-name').textContent = viewName;
       document.querySelector('#description').textContent = state.description;
       const warnings = document.querySelector('#warnings');
       warnings.textContent = state.warnings.join(' · ');
@@ -65,6 +82,16 @@
       download.download = `overhead-${state.id}.png`;
     }
     scene.addEventListener('change', renderScene);
+    function stepView(direction) {
+      viewIndex = (viewIndex + direction + views.length) % views.length;
+      renderScene();
+    }
+    document.querySelector('#previous').addEventListener('click', () => stepView(-1));
+    document.querySelector('#next').addEventListener('click', () => stepView(1));
+    document.querySelector('#radar').addEventListener('click', () => {
+      viewIndex = 0;
+      renderScene();
+    });
     document.querySelector('#zoom').addEventListener('click', event => {
       const actual = device.classList.toggle('actual');
       event.currentTarget.setAttribute('aria-pressed', String(actual));

@@ -2,10 +2,16 @@ esphome:
   name: overhead
   friendly_name: Overhead
   min_version: 2026.11.0
+  includes:
+    - <overhead.h>  # Declare the board types before ESPHome generates the globals.
+    - overhead.h    # Copy the local header into the build.
   on_boot:
     priority: -100
     then:
-      - component.update: board_display
+      - lambda: |-
+          id(poll_storage) = global_preferences->make_preference<overhead::PollSchedule>(0x3642E591);
+          id(poll_storage).load(&id(poll_schedule));
+      - script.execute: redraw_board
 
 esp32:
   board: seeed_xiao_esp32s3
@@ -21,12 +27,11 @@ logger:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  on_connect:
-    - if:
-        condition:
-          lambda: return !id(has_requested);
-        then:
-          - script.execute: fetch_aircraft
+
+time:
+  - platform: sntp
+    id: flight_clock
+    timezone: UTC
 
 http_request:
   timeout: 8s
@@ -39,44 +44,137 @@ substitutions:
   home_longitude: !secret home_longitude
 
 globals:
-  - id: has_requested
-    type: bool
-    initial_value: 'false'
-  - id: aircraft_rows
-    type: 'std::vector<std::pair<double, std::string>>'
+  - id: poll_schedule
+    type: overhead::PollSchedule
+  - id: poll_storage
+    type: esphome::ESPPreferenceObject
+  - id: aircraft
+    type: 'std::vector<overhead::Aircraft>'
+  - id: board_view
+    type: overhead::View
+    initial_value: 'overhead::View::RADAR'
   - id: board_status
     type: std::string
     initial_value: '"Waiting for Wi-Fi"'
 
 interval:
-  - interval: 3min
+  - interval: 1s
     then:
-      - script.execute: fetch_aircraft
+      - if:
+          condition:
+            not:
+              script.is_running: fetch_aircraft
+          then:
+            - lambda: |-
+                const auto wait = [&](const char *message) {
+                  if (id(board_status) == message) return;
+                  id(aircraft).clear();
+                  id(board_status) = message;
+                  id(redraw_board).execute();
+                };
+                if (!wifi::global_wifi_component->is_connected()) {
+                  wait("Waiting for Wi-Fi");
+                  return;
+                }
+                const auto time = id(flight_clock).utcnow();
+                if (!time.is_valid()) {
+                  wait("Waiting for flight data");
+                  return;
+                }
+                const auto now = uint64_t(time.timestamp) * 1000;
+                if (id(poll_schedule).waiting_for_quota(now)) {
+                  wait("Feed quota reached");
+                } else if (id(poll_schedule).ready(now)) {
+                  id(fetch_aircraft).execute();
+                } else if (id(board_status) == "Waiting for Wi-Fi") {
+                  wait("Waiting for flight data");
+                }
+
+binary_sensor:
+  - platform: gpio
+    id: left_button
+    pin:
+      number: GPIO5
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on_off: 35ms
+    on_press:
+      - lambda: id(board_view) = overhead::step_view(id(board_view), -1);
+      - script.execute: redraw_board
+  - platform: gpio
+    id: right_button
+    pin:
+      number: GPIO4
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on_off: 35ms
+    on_press:
+      - lambda: id(board_view) = overhead::step_view(id(board_view), 1);
+      - script.execute: redraw_board
+  - platform: gpio
+    id: green_button
+    pin:
+      number: GPIO3
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on_off: 35ms
+    on_press:
+      - lambda: id(board_view) = overhead::View::RADAR;
+      - script.execute: redraw_board
 
 script:
+  - id: redraw_board
+    then:
+      - wait_until:
+          condition:
+            lambda: return !id(board_display).is_updating();
+      - component.update: board_display
   - id: fetch_aircraft
     then:
       - wait_until:
           condition:
             lambda: return !id(board_display).is_updating();
       - if:
-          condition: wifi.connected
+          condition:
+            and:
+              - wifi.connected
+              - lambda: |-
+                  const auto now = id(flight_clock).utcnow();
+                  if (!now.is_valid() || !id(poll_schedule).record_attempt(uint64_t(now.timestamp) * 1000)) {
+                    return false;
+                  }
+                  if (id(poll_storage).save(&id(poll_schedule)) && global_preferences->sync()) return true;
+                  ESP_LOGW("overhead", "Unable to save flight request budget");
+                  return false;
           then:
-            - lambda: id(has_requested) = true;
             - http_request.get:
                 url: !lambda |-
                   return "https://api.adsb.lol/v2/point/" +
                          std::to_string(double(${home_latitude})) + "/" +
                          std::to_string(double(${home_longitude})) + "/${radius_nm}";
                 capture_response: true
+                collect_headers:
+                  - Retry-After
                 max_response_buffer_size: 65536
                 on_response:
                   - lambda: |-
-                      auto &rows = id(aircraft_rows);
+                      auto &flights = id(aircraft);
                       auto &status = id(board_status);
-                      rows.clear();
+                      flights.clear();
                       if (response->status_code != 200) {
-                        status = response->status_code == 429 ? "Feed quota reached" : "Flight feed unavailable";
+                        if (response->status_code == 429) {
+                          status = "Feed quota reached";
+                          const auto now = uint64_t(id(flight_clock).timestamp_now()) * 1000;
+                          id(poll_schedule).rate_limited(now, response->get_response_header("Retry-After"));
+                          if (!id(poll_storage).save(&id(poll_schedule)) || !global_preferences->sync()) {
+                            ESP_LOGW("overhead", "Unable to save flight quota wait");
+                          }
+                        } else {
+                          status = "Flight feed unavailable";
+                        }
                         return;
                       }
 
@@ -86,9 +184,6 @@ script:
                           return root["total"].is<int>() && root["total"].as<int>() == 0;
                         }
 
-                        constexpr double radians = 0.017453292519943295;
-                        constexpr double home_lat = ${home_latitude} * radians;
-                        constexpr double home_lon = ${home_longitude} * radians;
                         for (JsonObjectConst plane : aircraft) {
                           if (!plane["lat"].is<double>() || !plane["lon"].is<double>() ||
                               !plane["seen_pos"].is<double>() || plane["seen_pos"].as<double>() > 30 ||
@@ -96,13 +191,14 @@ script:
                             continue;
                           }
 
-                          const double lat = plane["lat"].as<double>() * radians;
-                          const double lon = plane["lon"].as<double>() * radians;
-                          const double dlat = std::sin((lat - home_lat) / 2);
-                          const double dlon = std::sin((lon - home_lon) / 2);
-                          const double a = dlat * dlat + std::cos(home_lat) * std::cos(lat) * dlon * dlon;
-                          const double distance = 6880.13 * std::asin(std::sqrt(std::clamp(a, 0.0, 1.0)));
-                          if (distance > ${radius_nm}) {
+                          const auto latitude = plane["lat"].as<double>();
+                          const auto longitude = plane["lon"].as<double>();
+                          if (!(latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180)) {
+                            continue;
+                          }
+                          const auto position = overhead::relative_position(
+                              ${home_latitude}, ${home_longitude}, latitude, longitude);
+                          if (position.distance_nm > ${radius_nm}) {
                             continue;
                           }
 
@@ -112,46 +208,47 @@ script:
                           if (label.empty()) label = plane["r"] | "";
                           if (label.empty()) label = plane["hex"] | "-";
 
-                          const auto altitude = plane["alt_baro"].is<int>()
-                              ? std::to_string(plane["alt_baro"].as<int>()) : "-";
-                          const auto speed = plane["gs"].is<double>()
-                              ? std::to_string(std::lround(plane["gs"].as<double>())) : "-";
-
-                          char row[64];
-                          snprintf(row, sizeof(row), "%-10.10s %-6.6s %8s %7s %7.1f",
-                                   label.c_str(), plane["t"] | "-", altitude.c_str(), speed.c_str(), distance);
-                          rows.emplace_back(distance, row);
+                          overhead::Aircraft flight{position, label, plane["t"] | "-", {}, {}};
+                          if (plane["alt_baro"].is<int>()) flight.altitude_ft = plane["alt_baro"].as<int>();
+                          if (plane["gs"].is<double>()) flight.speed_kt = std::lround(plane["gs"].as<double>());
+                          flights.push_back(std::move(flight));
                         }
-                        std::sort(rows.begin(), rows.end());
+                        std::sort(flights.begin(), flights.end());
                         return true;
                       });
                       status = valid ? "" : "Invalid flight data";
                       if (valid) {
                         ESP_LOGI("overhead", "Flight board received %u nearby aircraft",
-                                 static_cast<unsigned>(rows.size()));
+                                 static_cast<unsigned>(flights.size()));
                       }
-                  - component.update: board_display
                 on_error:
                   - lambda: |-
-                      id(aircraft_rows).clear();
+                      id(aircraft).clear();
                       id(board_status) = "Flight feed unavailable";
-                  - component.update: board_display
-          else:
             - lambda: |-
-                id(aircraft_rows).clear();
-                id(board_status) = "Waiting for Wi-Fi";
-            - component.update: board_display
+                const auto now = uint64_t(id(flight_clock).timestamp_now()) * 1000;
+                id(poll_schedule).finish(now, id(board_status).empty() && !id(aircraft).empty());
+            - script.execute: redraw_board
 
 font:
   - file: "gfonts://IBM Plex Mono"
-    id: board_font
-    size: 27
+    id: label_font
+    size: 15
   - file: "gfonts://Inter@700"
     id: title_font
-    size: 60
-  - file: "gfonts://Inter"
-    id: detail_font
-    size: 20
+    size: 48
+  - file: "gfonts://Inter@700"
+    id: callsign_font
+    size: 26
+  - file: "gfonts://Inter@700"
+    id: spotlight_font
+    size: 44
+  - file: "gfonts://Inter@700"
+    id: distance_font
+    size: 70
+  - file: "gfonts://Inter@700"
+    id: value_font
+    size: 22
 
 spi:
   clk_pin: GPIO7
@@ -165,26 +262,317 @@ display:
     full_update_every: 12
     lambda: |-
       const auto ink = Color::BLACK;
-      it.print(32, 17, id(title_font), ink, "Overhead");
-      it.printf(768, 50, id(detail_font), ink, TextAlign::TOP_RIGHT, "Within %s NM", "${radius_nm}");
-      it.horizontal_line(32, 108, 736, ink);
-
-      const auto &rows = id(aircraft_rows);
+      const auto paper = Color::WHITE;
+      const auto &flights = id(aircraft);
       const auto &status = id(board_status);
-      if (!status.empty()) {
-        it.print(32, 150, id(board_font), ink, status.c_str());
-      } else if (rows.empty()) {
-        it.print(32, 150, id(board_font), ink, "No aircraft in range");
-      } else {
-        it.printf(36, 123, id(board_font), ink, "%-10s %-6s %8s %7s %7s",
-                  "FLIGHT", "TYPE", "ALT FT", "SPD KT", "DIST NM");
-        for (size_t i = 0; i < std::min<size_t>(rows.size(), 6); ++i) {
-          it.print(36, 169 + 43 * i, id(board_font), ink, rows[i].second.c_str());
-        }
-        if (rows.size() > 6) {
-          it.printf(768, 442, id(detail_font), ink, TextAlign::TOP_RIGHT, "+%u more",
-                    static_cast<unsigned>(rows.size() - 6));
-        }
+      const auto view = id(board_view);
+      constexpr double range_nm = ${radius_nm};
+
+      it.print(28, 12, id(title_font), ink, "Overhead");
+      if (status.empty()) {
+        it.printf(772, 20, id(value_font), ink, TextAlign::TOP_RIGHT, "%u aircraft",
+                  static_cast<unsigned>(flights.size()));
       }
-      it.horizontal_line(32, 430, 736, ink);
-      it.print(32, 442, id(detail_font), ink, "adsb.lol  /  3 min updates");
+      it.printf(772, 52, id(label_font), ink, TextAlign::TOP_RIGHT, "%g NM RADIUS", range_nm);
+      it.horizontal_line(28, 86, 744, ink);
+      it.horizontal_line(28, 438, 744, ink);
+      it.print(28, 449, id(label_font), ink, "adsb.lol");
+      const char *tabs[] = {"RADAR", "SPOTLIGHT", "FLIGHT CARDS"};
+      const int tab_x[] = {478, 548, 650};
+      const int tab_width[] = {65, 98, 122};
+      for (int i = 0; i < static_cast<int>(overhead::View::COUNT); ++i) {
+        const bool active = i == static_cast<int>(view);
+        if (active) it.filled_rectangle(tab_x[i], 447, tab_width[i], 24, ink);
+        it.print(tab_x[i] + tab_width[i] / 2, 449, id(label_font), active ? paper : ink,
+                 TextAlign::TOP_CENTER, tabs[i]);
+      }
+
+      if (!status.empty() || (flights.empty() && view != overhead::View::RADAR)) {
+        it.print(400, 226, id(callsign_font), ink, TextAlign::TOP_CENTER,
+                 status.empty() ? "No aircraft in range" : status.c_str());
+        return;
+      }
+
+      const auto altitude = [](const overhead::Aircraft &flight) {
+        if (!flight.altitude_ft) return std::string("-");
+        auto value = std::to_string(*flight.altitude_ft);
+        const size_t start = value.front() == '-' ? 1 : 0;
+        for (size_t i = value.size(); i > start + 3; i -= 3) value.insert(i - 3, ",");
+        return value;
+      };
+      const auto speed = [](const overhead::Aircraft &flight) {
+        return flight.speed_kt ? std::to_string(*flight.speed_kt) : std::string("-");
+      };
+      const auto overflow = [&](size_t shown) {
+        if (flights.size() > shown) {
+          it.printf(772, 414, id(label_font), ink, TextAlign::TOP_RIGHT, "+%u more",
+                    static_cast<unsigned>(flights.size() - shown));
+        }
+      };
+      const auto draw_jet = [&](int x, int y, int scale, int outline, Color color) {
+        const auto stroke = [&](int left, int top, int width, int height) {
+          it.filled_rectangle(x + left * scale - outline, y + top * scale - outline,
+                              width * scale + 2 * outline, height * scale + 2 * outline, color);
+        };
+        constexpr int half_widths[] = {
+          0, 1, 2, 2, 2, 2, 2, 2, 3, 5, 7, 9, 11, 11, 9, 7, 2, 2, 2, 2, 2, 4, 6, 6, 2
+        };
+        for (int row = 0; row < 25; ++row) {
+          const int half_width = half_widths[row];
+          stroke(-half_width, row - 12, 2 * half_width + 1, 1);
+        }
+        // Wing-mounted engines leave a gap on each side of the fuselage.
+        stroke(-7, 2, 3, 5);
+        stroke(5, 2, 3, 5);
+      };
+
+      if (view == overhead::View::RADAR) {
+        constexpr int cx = 245, cy = 265, radius = 128;
+        it.filled_rectangle(28, 104, 434, 320, ink);
+        it.circle(cx, cy, radius, paper);
+        it.circle(cx, cy, radius - 1, paper);
+        it.circle(cx, cy, radius / 2, paper);
+        it.print(cx, 106, id(label_font), paper, TextAlign::TOP_CENTER, "N");
+        it.print(cx, 404, id(label_font), paper, TextAlign::TOP_CENTER, "S");
+        it.print(79, cy, id(label_font), paper, TextAlign::CENTER, "W");
+        it.print(411, cy, id(label_font), paper, TextAlign::CENTER, "E");
+
+        for (int offset = -radius + 5; offset < radius; offset += 7) {
+          it.horizontal_line(cx + offset, cy, 2, paper);
+          it.vertical_line(cx, cy + offset, 2, paper);
+        }
+        for (int degrees = 15; degrees < 360; degrees += 15) {
+          if (degrees % 90 == 0) continue;
+          const double angle = degrees * overhead::RADIANS_PER_DEGREE;
+          const int x = cx + std::lround((radius - 6) * std::sin(angle));
+          const int y = cy - std::lround((radius - 6) * std::cos(angle));
+          it.filled_circle(x, y, 1, paper);
+        }
+        it.horizontal_line(cx - 5, cy, 11, paper);
+        it.vertical_line(cx, cy - 5, 11, paper);
+        it.printf(45, 390, id(label_font), paper, "%g NM RINGS", range_nm / 2);
+
+        if (flights.empty()) {
+          it.print(484, 232, id(callsign_font), ink, "No aircraft in range");
+          return;
+        }
+
+        const auto numbered_plane = [&](int x, int y, unsigned number, Color foreground, Color background,
+                                        int label_offset = 18) {
+          draw_jet(x, y, 1, 1, background);
+          it.filled_rectangle(x + label_offset - 6, y - 8, 13, 17, background);
+          draw_jet(x, y, 1, 0, foreground);
+          it.printf(x + label_offset, y, id(label_font), foreground, TextAlign::CENTER, "%u", number);
+        };
+
+        struct ScopePoint { int x; int y; };
+        struct ScopeBounds {
+          int left, top, right, bottom;
+          bool intersects(const ScopeBounds &other) const {
+            return left <= other.right && right >= other.left && top <= other.bottom && bottom >= other.top;
+          }
+          bool shares_line(const ScopeBounds &other) const {
+            return (left == right && other.left == other.right && left == other.left &&
+                    std::min(bottom, other.bottom) > std::max(top, other.top)) ||
+                   (top == bottom && other.top == other.bottom && top == other.top &&
+                    std::min(right, other.right) > std::max(left, other.left));
+          }
+        };
+        struct Marker {
+          ScopePoint icon;
+          int label_offset;
+          ScopeBounds bounds;
+          ScopeBounds leader;
+        };
+        const auto on_scope = [&](const overhead::Position &position) {
+          const double length = radius * std::clamp(position.distance_nm / range_nm, 0.0, 1.0);
+          return ScopePoint{
+            cx + int(std::lround(length * std::sin(position.bearing_radians))),
+            cy - int(std::lround(length * std::cos(position.bearing_radians))),
+          };
+        };
+        constexpr size_t max_markers = 4;
+        const size_t keyed = std::min(flights.size(), max_markers);
+        ScopePoint contacts[max_markers];
+        std::optional<Marker> markers[max_markers];
+        for (size_t i = 0; i < keyed; ++i) {
+          contacts[i] = on_scope(flights[i].position);
+        }
+        const auto clear = [&](const Marker &candidate, size_t index) {
+          if (candidate.bounds.intersects({45, 390, 145, 412})) return false;  // Range caption.
+          if (candidate.bounds.intersects({73, 254, 85, 276}) ||
+              candidate.bounds.intersects({405, 254, 417, 276})) return false;  // W and E.
+          for (size_t i = 0; i < keyed; ++i) {
+            if (i == index) continue;
+            const auto [x, y] = contacts[i];
+            if (candidate.bounds.intersects({x - 2, y - 2, x + 2, y + 2})) return false;
+            if (markers[i] && (candidate.bounds.intersects(markers[i]->bounds) ||
+                               candidate.bounds.intersects(markers[i]->leader) ||
+                               candidate.leader.intersects(markers[i]->bounds) ||
+                               candidate.leader.shares_line(markers[i]->leader))) return false;
+          }
+          return true;
+        };
+        const auto find_marker = [&](size_t i) -> std::optional<Marker> {
+          const auto [x, y] = contacts[i];
+          for (const int gap : {0, 29, 24, 16, 58, 87, 116, 145, 174, 203, 232}) {
+            const ScopePoint candidates[] = {{x, y - gap}, {x, y + gap}, {x - gap, y}, {x + gap, y}};
+            for (const auto [mx, my] : candidates) {
+              if (std::abs(mx - cx) > radius + 16 || std::abs(my - cy) > radius) continue;
+              for (const int side : {1, -1}) {
+                if ((mx - x) * side < 0) continue;  // Put the number away from a horizontal leader.
+                const Marker marker{{mx, my}, side * 18,
+                                    {mx - (side < 0 ? 24 : 12), my - 13,
+                                     mx + (side > 0 ? 24 : 12), my + 13},
+                                    {std::min(x, mx), std::min(y, my),
+                                     std::max(x, mx), std::max(y, my)}};
+                if (clear(marker, i)) return marker;
+              }
+            }
+          }
+          return std::nullopt;
+        };
+        // Earlier placements can box in a later contact. Try the other priority
+        // orders before moving any contact to the margin.
+        size_t order[] = {0, 1, 2, 3};
+        std::optional<Marker> best[max_markers];
+        size_t placed = 0;
+        do {
+          std::fill(markers, markers + keyed, std::nullopt);
+          size_t count = 0;
+          for (size_t j = 0; j < keyed; ++j) {
+            const size_t i = order[j];
+            markers[i] = find_marker(i);
+            count += markers[i].has_value();
+          }
+          if (count > placed) {
+            std::copy(markers, markers + keyed, best);
+            placed = count;
+          }
+          if (placed == keyed) break;
+        } while (std::next_permutation(order, order + keyed));
+        std::copy(best, best + keyed, markers);
+
+        ScopePoint margin_markers[max_markers];
+        bool margin_used[max_markers] = {};
+        for (size_t i = keyed; i < flights.size(); ++i) {
+          const auto [x, y] = on_scope(flights[i].position);
+          it.filled_circle(x, y, 4, ink);
+          it.filled_circle(x, y, 2, paper);
+        }
+        for (size_t i = 0; i < keyed; ++i) {
+          const auto [x, y] = contacts[i];
+          if (!markers[i]) {
+            size_t slot = (y - 104) / 81;
+            while (margin_used[slot]) slot = (slot + 1) % max_markers;
+            margin_used[slot] = true;
+            margin_markers[i] = {435, 144 + 81 * int(slot)};
+            const auto [mx, my] = margin_markers[i];
+            it.vertical_line(x, std::min(y, my), std::abs(y - my) + 1, paper);
+            it.horizontal_line(x, my, mx - x + 1, paper);
+            it.filled_circle(x, y, 2, paper);
+            continue;
+          }
+          const auto [mx, my] = markers[i]->icon;
+          if (x == mx && y == my) continue;
+          const auto &leader = markers[i]->leader;
+          it.filled_rectangle(leader.left, leader.top, leader.right - leader.left + 1,
+                              leader.bottom - leader.top + 1, paper);
+          it.filled_circle(x, y, 2, paper);
+        }
+        for (size_t i = 0; i < keyed; ++i) {
+          const auto [x, y] = markers[i] ? markers[i]->icon : margin_markers[i];
+          const int label_offset = markers[i] ? markers[i]->label_offset : 18;
+          numbered_plane(x, y, static_cast<unsigned>(i + 1), paper, ink, label_offset);
+        }
+
+        const auto &closest = flights.front();
+        it.rectangle(484, 104, 288, 162, ink);
+        it.filled_rectangle(484, 104, 288, 33, ink);
+        numbered_plane(505, 120, 1, paper, ink);
+        it.print(534, 110, id(label_font), paper, "CLOSEST AIRCRAFT");
+        it.printf(758, 110, id(label_font), paper, TextAlign::TOP_RIGHT,
+                  "%.1f NM", closest.position.distance_nm);
+        it.printf(498, 142, id(callsign_font), ink, "%.10s", closest.callsign.c_str());
+        it.printf(498, 176, id(label_font), ink, "%.6s", closest.type.c_str());
+        it.horizontal_line(498, 201, 260, ink);
+        it.print(498, 209, id(label_font), ink, "ALT FT");
+        it.print(758, 209, id(label_font), ink, TextAlign::TOP_RIGHT, "SPD KT");
+        it.print(498, 229, id(value_font), ink, altitude(closest).c_str());
+        it.print(758, 229, id(value_font), ink, TextAlign::TOP_RIGHT, speed(closest).c_str());
+        if (keyed > 1) {
+          it.print(484, 274, id(label_font), ink, "ALSO IN RANGE");
+          for (size_t i = 1; i < keyed; ++i) {
+            const int y = 307 + 35 * (i - 1);
+            it.horizontal_line(484, y - 5, 288, ink);
+            numbered_plane(495, y + 11, static_cast<unsigned>(i + 1), ink, paper);
+            it.printf(524, y, id(value_font), ink, "%.10s", flights[i].callsign.c_str());
+            it.printf(772, y + 3, id(label_font), ink, TextAlign::TOP_RIGHT,
+                      "%.1f NM", flights[i].position.distance_nm);
+          }
+        }
+        overflow(keyed);
+        return;
+      }
+
+      if (view == overhead::View::SPOTLIGHT) {
+        const auto &closest = flights.front();
+        it.filled_rectangle(28, 104, 456, 320, ink);
+        it.print(51, 124, id(label_font), paper, "CLOSEST AIRCRAFT");
+        it.printf(461, 124, id(label_font), paper, TextAlign::TOP_RIGHT, "%.6s", closest.type.c_str());
+        it.printf(48, 146, id(spotlight_font), paper, "%.10s", closest.callsign.c_str());
+        it.printf(48, 207, id(distance_font), paper, "%.1f", closest.position.distance_nm);
+        it.print(52, 289, id(label_font), paper, "NAUTICAL MILES AWAY");
+        draw_jet(414, 251, 3, 0, paper);
+        it.horizontal_line(51, 326, 410, paper);
+        it.print(51, 342, id(label_font), paper, "ALTITUDE FT");
+        it.print(255, 342, id(label_font), paper, "GROUND SPEED KT");
+        it.print(51, 366, id(value_font), paper, altitude(closest).c_str());
+        it.print(255, 366, id(value_font), paper, speed(closest).c_str());
+
+        if (flights.size() == 1) {
+          it.print(514, 122, id(label_font), ink, "DISTANCE FROM HERE");
+          const int marker = 515 + std::lround(256 * closest.position.distance_nm / range_nm);
+          it.horizontal_line(514, 232, 258, ink);
+          it.vertical_line(514, 225, 15, ink);
+          it.vertical_line(771, 225, 15, ink);
+          it.filled_rectangle(marker - 4, 227, 9, 11, ink);
+          it.print(514, 246, id(label_font), ink, "0");
+          it.printf(772, 246, id(label_font), ink, TextAlign::TOP_RIGHT, "%g NM", range_nm);
+        } else {
+          it.print(514, 122, id(label_font), ink, "ALSO IN RANGE");
+          const size_t shown = std::min<size_t>(flights.size(), 4);
+          for (size_t i = 1; i < shown; ++i) {
+            const auto &flight = flights[i];
+            const int y = 153 + 82 * (i - 1);
+            it.horizontal_line(514, y, 258, ink);
+            it.printf(514, y + 10, id(callsign_font), ink, "%.10s", flight.callsign.c_str());
+            it.printf(514, y + 44, id(label_font), ink, "%.6s", flight.type.c_str());
+            it.printf(772, y + 44, id(label_font), ink, TextAlign::TOP_RIGHT,
+                      "%.1f NM", flight.position.distance_nm);
+          }
+          overflow(shown);
+        }
+        return;
+      }
+
+      const size_t shown = std::min<size_t>(flights.size(), 6);
+      const int columns = std::min<size_t>(shown, 3);
+      for (size_t i = 0; i < shown; ++i) {
+        const auto &flight = flights[i];
+        const int x = (800 - (252 * columns - 12)) / 2 + 252 * (i % 3);
+        const int y = shown <= 3 ? 185 : 104 + 154 * (i / 3);
+        it.rectangle(x, y, 240, 147, ink);
+        it.filled_rectangle(x, y, 240, 35, ink);
+        it.printf(x + 14, y + 7, id(label_font), paper, "%.6s", flight.type.c_str());
+        it.printf(x + 226, y + 7, id(label_font), paper, TextAlign::TOP_RIGHT,
+                  "%.1f NM", flight.position.distance_nm);
+        const auto font = flight.callsign.size() > 8 ? id(value_font) : id(callsign_font);
+        it.printf(x + 14, y + 43, font, ink, "%.10s", flight.callsign.c_str());
+        it.horizontal_line(x + 14, y + 83, 212, ink);
+        it.print(x + 14, y + 92, id(label_font), ink, "ALT FT");
+        it.print(x + 226, y + 92, id(label_font), ink, TextAlign::TOP_RIGHT, "SPD KT");
+        it.print(x + 14, y + 112, id(value_font), ink, altitude(flight).c_str());
+        it.print(x + 226, y + 112, id(value_font), ink, TextAlign::TOP_RIGHT, speed(flight).c_str());
+      }
+      overflow(shown);
