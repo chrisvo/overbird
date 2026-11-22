@@ -113,6 +113,19 @@ struct Aircraft {
   std::array<std::optional<Position>, 2> history{};
   uint32_t history_at_ms = 0;
   AircraftKind kind = aircraft_kind_for(type);
+  std::string model{};
+
+  void set_model(std::string_view description) {
+    model.clear();
+    for (const unsigned char character : description) {
+      // Count each unsupported UTF-8 character once. The label font uses fixed-width ASCII here.
+      if ((character & 0xc0) == 0x80) continue;
+      if (character > '~') model += '?';
+      else if (character > ' ') model += static_cast<char>(character);
+      else if (!model.empty() && model.back() != ' ') model += ' ';
+    }
+    if (!model.empty() && model.back() == ' ') model.pop_back();
+  }
 
   void apply_emitter_category(std::string_view category) {
     if (category == "A7") kind = AircraftKind::ROTORCRAFT;

@@ -14,6 +14,8 @@ The board uses a swept-wing icon for jets, a straight-wing icon for non-jet airp
 
 The views show an airline name beside the callsign when the board recognizes its three-letter designator. Aircraft with unrecognized callsigns or only a registration still show their identifier. [ICAO airline designators](https://www.icao.int/operational-safety/Designators-and-indicators)
 
+The views also show the make and model when the receiver includes a description (`desc`). A readsb receiver with an aircraft database can provide this field with `--db-file-lt`. [readsb feed fields](https://github.com/wiedehopf/readsb/blob/dev/README-json.md)
+
 The footer shows the time of the last successful update in UTC, including seconds. If the feed stops updating or Wi-Fi goes offline, the board labels the last snapshot stale and retains it for up to five minutes after that update.
 
 Set `receiver_url` in `secrets.yaml` to the LAN address of your dump1090 or readsb `aircraft.json` endpoint. The board requests a snapshot every 10 seconds, even when the sky is empty, and filters aircraft to the configured radius on the device. It backs off when the receiver returns an error. [dump1090 JSON format](https://github.com/flightaware/dump1090/blob/master/README-json.md)
@@ -43,7 +45,7 @@ For repeated edits, run `uv run --locked preview/build.py --watch`. It rebuilds 
 
 The preview compiles and executes the **actual display lambda** from `overhead.yaml` using a small host display adapter. It shares the firmware's aircraft type from `overhead.h`. Layout coordinates, font sizes, view contents, status branches, and the range caption come from the firmware configuration.
 
-`preview/fixtures.json` supplies sample aircraft as `[flight, type, altitude_ft, speed_kt, distance_nm, bearing_deg, track_deg, history, emitter_category]`. Track, history, and emitter category are optional. History contains distance and bearing pairs, most recent first. A scene can set status text and `updated_at` to show a retained snapshot. Use `null` for unknown altitude, speed, or track. The preview uses synthetic fixtures and runs offline.
+`preview/fixtures.json` supplies sample aircraft as `[flight, type, altitude_ft, speed_kt, distance_nm, bearing_deg, track_deg, history, emitter_category, model]`. Track, history, emitter category, and model are optional. History contains distance and bearing pairs, most recent first. A scene can set status text and `updated_at` to show a retained snapshot. Use `null` for unknown altitude, speed, or track. The preview uses synthetic fixtures and runs offline.
 
 For an agent working on the layout, build the preview, inspect the generated PNGs, and show `preview/output/index.html` using T3's `html_preview` followed by `html_render`. Rebuild and render again after edits; an already displayed inline preview is a snapshot.
 

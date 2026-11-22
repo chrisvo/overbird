@@ -228,6 +228,7 @@ script:
 
                           overhead::Aircraft flight{position, label, plane["t"] | "-", {}, {}, {}, airline,
                                                     plane["hex"] | ""};
+                          flight.set_model(plane["desc"] | "");
                           flight.apply_emitter_category(plane["category"] | "");
                           if (altitude.is<int>()) flight.altitude_ft = altitude.as<int>();
                           if (speed.is<double>()) flight.speed_kt = std::lround(speed.as<double>());
@@ -406,9 +407,17 @@ display:
           }
         }
       };
-      const auto show_airline = [&](int x, int y, Color color, const overhead::Aircraft &flight) {
+      const auto show_airline = [&](int x, int y, Color color, const overhead::Aircraft &flight,
+                                    TextAlign align = TextAlign::TOP_LEFT) {
         if (!flight.airline.empty()) {
-          it.printf(x, y, id(label_font), color, "%.*s", int(flight.airline.size()), flight.airline.data());
+          it.printf(x, y, id(label_font), color, align, "%.*s", int(flight.airline.size()), flight.airline.data());
+        }
+      };
+      const auto show_model = [&](int x, int y, Color color, const overhead::Aircraft &flight, size_t width) {
+        if (flight.model.size() > width) {
+          it.printf(x, y, id(label_font), color, "%.*s...", int(width - 3), flight.model.c_str());
+        } else if (!flight.model.empty()) {
+          it.print(x, y, id(label_font), color, flight.model.c_str());
         }
       };
 
@@ -603,17 +612,21 @@ display:
         it.printf(758, 110, id(label_font), paper, TextAlign::TOP_RIGHT,
                   "%.1f NM", closest.position.distance_nm);
         it.printf(498, 142, id(callsign_font), ink, "%.10s", closest.callsign.c_str());
-        if (closest.airline.empty()) {
+        const bool has_both = !closest.model.empty() && !closest.airline.empty();
+        if (closest.model.empty() && closest.airline.empty()) {
           it.printf(498, 176, id(label_font), ink, "%.6s", closest.type.c_str());
         } else {
-          show_airline(498, 176, ink, closest);
-          it.printf(758, 176, id(label_font), ink, TextAlign::TOP_RIGHT, "%.6s", closest.type.c_str());
+          const int model_y = has_both ? 188 : 176;
+          show_airline(498, has_both ? 172 : 176, ink, closest);
+          show_model(498, model_y, ink, closest, 22);
+          it.printf(758, model_y, id(label_font), ink, TextAlign::TOP_RIGHT, "%.6s", closest.type.c_str());
         }
-        it.horizontal_line(498, 201, 260, ink);
-        it.print(498, 209, id(label_font), ink, "ALT FT");
-        it.print(758, 209, id(label_font), ink, TextAlign::TOP_RIGHT, "SPD KT");
-        it.print(498, 229, id(value_font), ink, altitude(closest).c_str());
-        it.print(758, 229, id(value_font), ink, TextAlign::TOP_RIGHT, speed(closest).c_str());
+        const int stats_y = has_both ? 206 : 201;
+        it.horizontal_line(498, stats_y, 260, ink);
+        it.print(498, stats_y + 8, id(label_font), ink, "ALT FT");
+        it.print(758, stats_y + 8, id(label_font), ink, TextAlign::TOP_RIGHT, "SPD KT");
+        it.print(498, stats_y + 28, id(value_font), ink, altitude(closest).c_str());
+        it.print(758, stats_y + 28, id(value_font), ink, TextAlign::TOP_RIGHT, speed(closest).c_str());
         if (keyed > 1) {
           it.print(484, 274, id(label_font), ink, "ALSO IN RANGE");
           for (size_t i = 1; i < keyed; ++i) {
@@ -622,7 +635,12 @@ display:
             it.horizontal_line(484, y - 3, 288, ink);
             numbered_marker(495, y + 11, static_cast<unsigned>(i + 1), flight.kind, 0, ink, paper);
             it.printf(524, y, id(value_font), ink, "%.10s", flight.callsign.c_str());
-            show_airline(524, y + 18, ink, flight);
+            if (flight.model.empty()) {
+              show_airline(524, y + 18, ink, flight);
+            } else {
+              show_model(524, y + 18, ink, flight, 27 - (flight.airline.empty() ? 0 : flight.airline.size() + 1));
+              show_airline(772, y + 18, ink, flight, TextAlign::TOP_RIGHT);
+            }
             it.printf(772, y + 3, id(label_font), ink, TextAlign::TOP_RIGHT,
                       "%.1f NM", flight.position.distance_nm);
           }
@@ -637,7 +655,12 @@ display:
         it.print(51, 124, id(label_font), paper, "CLOSEST AIRCRAFT");
         it.printf(461, 124, id(label_font), paper, TextAlign::TOP_RIGHT, "%.6s", closest.type.c_str());
         it.printf(48, 146, id(spotlight_font), paper, "%.10s", closest.callsign.c_str());
-        show_airline(52, 199, paper, closest);
+        if (closest.model.empty()) {
+          show_airline(52, 199, paper, closest);
+        } else {
+          show_model(52, 199, paper, closest, 28);
+          show_airline(461, 199, paper, closest, TextAlign::TOP_RIGHT);
+        }
         it.printf(48, 207, id(distance_font), paper, "%.1f", closest.position.distance_nm);
         it.print(52, 289, id(label_font), paper, "NAUTICAL MILES AWAY");
         draw_aircraft(414, 251, closest.kind, 3, paper);
@@ -665,8 +688,13 @@ display:
             it.horizontal_line(514, y, 258, ink);
             it.printf(514, y + 10, id(callsign_font), ink, "%.10s", flight.callsign.c_str());
             show_airline(514, y + 44, ink, flight);
-            it.printf(514, y + (flight.airline.empty() ? 44 : 62), id(label_font), ink,
-                      "%.6s", flight.type.c_str());
+            const int detail_y = y + (flight.airline.empty() ? 44 : 62);
+            if (flight.model.empty()) {
+              it.printf(514, detail_y, id(label_font), ink, "%.6s", flight.type.c_str());
+            } else {
+              show_model(514, detail_y, ink, flight, 18);
+              it.printf(772, y + 62, id(label_font), ink, TextAlign::TOP_RIGHT, "%.6s", flight.type.c_str());
+            }
             draw_aircraft(692, y + 54, flight.kind, 1, ink);
             it.printf(772, y + 44, id(label_font), ink, TextAlign::TOP_RIGHT,
                       "%.1f NM", flight.position.distance_nm);
@@ -689,12 +717,14 @@ display:
         it.printf(x + 226, y + 7, id(label_font), paper, TextAlign::TOP_RIGHT,
                   "%.1f NM", flight.position.distance_nm);
         const auto font = flight.callsign.size() > 8 ? id(value_font) : id(callsign_font);
-        it.printf(x + 14, y + (flight.airline.empty() ? 43 : 37), font, ink, "%.10s", flight.callsign.c_str());
-        show_airline(x + 14, y + 64, ink, flight);
-        it.horizontal_line(x + 14, y + 83, 212, ink);
-        it.print(x + 14, y + 92, id(label_font), ink, "ALT FT");
-        it.print(x + 226, y + 92, id(label_font), ink, TextAlign::TOP_RIGHT, "SPD KT");
-        it.print(x + 14, y + 112, id(value_font), ink, altitude(flight).c_str());
-        it.print(x + 226, y + 112, id(value_font), ink, TextAlign::TOP_RIGHT, speed(flight).c_str());
+        const bool has_detail = !flight.airline.empty() || !flight.model.empty();
+        it.printf(x + 14, y + (has_detail ? 35 : 48), font, ink, "%.10s", flight.callsign.c_str());
+        show_airline(x + 14, y + 63, ink, flight);
+        show_model(x + 14, y + (flight.airline.empty() ? 63 : 79), ink, flight, 23);
+        it.horizontal_line(x + 14, y + 98, 212, ink);
+        it.print(x + 14, y + 101, id(label_font), ink, "ALT FT");
+        it.print(x + 226, y + 101, id(label_font), ink, TextAlign::TOP_RIGHT, "SPD KT");
+        it.print(x + 14, y + 118, id(value_font), ink, altitude(flight).c_str());
+        it.print(x + 226, y + 118, id(value_font), ink, TextAlign::TOP_RIGHT, speed(flight).c_str());
       }
       overflow(shown);

@@ -90,6 +90,17 @@ class PreviewTests(unittest.TestCase):
         self.assertIn("B789", spotlight)
         self.assertIn("A321", spotlight)
 
+    def test_aircraft_names_show_with_identifiers_and_type_codes(self):
+        for view in ("radar", "spotlight", "cards"):
+            with self.subTest(view=view):
+                text = self.texts(f"{view}-aircraft-names")
+                for label in ("N79VZ", "Cirrus SR20", "SR20", "Southwest", "Boeing 737-800"):
+                    self.assertIn(label, text)
+                self.assertIn("Cessna 172 Skyhawk", self.texts(f"{view}-single"))
+        self.assertIn("Airbus Helicopt...", self.texts("spotlight-aircraft-names"))
+        self.assertIn("Airbus Helicopters H135", self.texts("cards-aircraft-names"))
+        self.assertIn("GLF6", self.texts("cards-aircraft-names"))
+
     def test_all_images_have_panel_dimensions_and_binary_pixels(self):
         for state in self.states.values():
             with self.subTest(state=state["id"]):

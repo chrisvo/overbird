@@ -1,8 +1,20 @@
 [
   {
+    "id": "aircraft-names", "label": "Aircraft names", "description": "Sample tracks with make and model names from the receiver database, plus one contact with only a type code.",
+    "aircraft": [
+      ["N79VZ", "SR20", 2400, 108, 1.4, 47, 70, [[3.3, 49], [5.2, 50]], null, "Cirrus SR20"],
+      ["N172SP", "C172", 3100, 112, 3.4, 152, 315, [], null, "Cessna 172 Skyhawk"],
+      ["SWA1482", "B738", 12400, 312, 4.2, 285, 191, [], null, "Boeing 737-800"],
+      ["N513ME", "EC35", 4200, 115, 5.8, 90, 90, [], null, "Airbus Helicopters H135"],
+      ["UAL934", "B789", 35000, 486, 2.8, 30, 180, [], null, "Boeing 787-9 Dreamliner"],
+      ["N842GA", "GLF6", 24000, 493, 6.9, 73, null],
+      ["ASA617", "B739", 28400, 441, 9.8, 110, 270, [], null, "Boeing 737-900"]
+    ]
+  },
+  {
     "id": "busy", "label": "Busy sky", "description": "Eight flights distributed across the 10 NM range.",
     "aircraft": [
-      ["SWA1482", "B738", 12400, 312, 1.2, 47, 70, [[4.1, 256], [9.3, 253]]],
+      ["SWA1482", "B738", 12400, 312, 1.2, 47, 70, [[4.1, 256], [9.3, 253]], null, "Boeing 737-800"],
       ["UAL934", "B789", 35000, 486, 2.8, 285, 191, [[8.8, 352]]],
       ["N172SP", "C172", 2400, 108, 3.4, 152, 315, [[5.1, 146], [6.9, 143]]],
       ["DAL281", "A321", 18200, 376, 4.7, 30, 180],
@@ -32,7 +44,7 @@
       ["N111UX", "-", 15000, 310, 8.0, 235, 315, [], "A1"]
     ]
   },
-  {"id": "single", "label": "One aircraft", "description": "A quiet board with one nearby flight.", "aircraft": [["N172SP", "C172", 2400, 108, 0.8, 225, 65, [[1.9, 242], [3.4, 246]]]]},
+  {"id": "single", "label": "One aircraft", "description": "A quiet board with one nearby flight.", "aircraft": [["N172SP", "C172", 2400, 108, 0.8, 225, 65, [[1.9, 242], [3.4, 246]], null, "Cessna 172 Skyhawk"]]},
   {"id": "edge", "label": "Long / missing data", "description": "Long labels, missing values, and a flight at the range limit.", "aircraft": [["LONGCALLSIGN", "TYPE123", null, null, 0.0, 0], ["abcdef", "-", 45000, 512, 9.9, 180], ["N123456789", "B77W", 100000, 1000, 10.0, 300]]},
   {"id": "compass", "label": "Compass points", "description": "Four flights due north, east, south, and west at increasing distances.", "aircraft": [["NORTH", "B738", 2200, 184, 2.5, 0, 0], ["EAST", "B738", 11000, 309, 5.0, 90, 180], ["SOUTH", "A321", 16400, 388, 7.5, 180, 90], ["WEST", "E75L", 14000, 276, 10.0, 270, 270]]},
   {"id": "crowded", "label": "Crowded radar", "description": "Two aircraft on the same approach, one to the west, and one at the east range limit.", "aircraft": [["WESTNEAR", "B738", 4000, 220, 2.0, 270, 0], ["EASTNEAR", "C172", 2400, 108, 2.05, 90, 0], ["FOLLOW", "A321", 7000, 246, 3.44, 90, 0], ["ATLIMIT", "E75L", 9000, 260, 10, 90, 0]]},

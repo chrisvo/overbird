@@ -103,6 +103,8 @@ def record_commands(config, drawing, fixtures):
                 )
             if len(details) > 2 and details[2] is not None:
                 source += f'flight_snapshot->flights.back().apply_emitter_category({json.dumps(details[2])});\n'
+            if len(details) > 3 and details[3] is not None:
+                source += f'flight_snapshot->flights.back().set_model({json.dumps(details[3], ensure_ascii=False)});\n'
         source += 'if (flight_snapshot) std::sort(flight_snapshot->flights.begin(), flight_snapshot->flights.end());\n'
         source += '{ Display it; std::cout << "["; draw(it); std::cout << "]\\n"; }\n'
     source += '}\n'
